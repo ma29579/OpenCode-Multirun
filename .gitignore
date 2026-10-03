@@ -1,0 +1,26 @@
+# --- Script output (default paths) ---------------------------------
+# Raw data per run (events.jsonl, export.json, stderr.log, workspace/ ...)
+opencode-runs/
+# Result CSVs may contain prompts, paths and host names
+*.csv
+
+# --- Local configuration and secrets -----------------------------------
+.env
+.env.*
+opencode.json
+.opencode/
+
+# --- Python -----------------------------------------------------------------
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- Operating system and editors --------------------------------------------
+.DS_Store
+.idea/
+.vscode/
+*.swp
