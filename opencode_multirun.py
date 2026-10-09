@@ -2,8 +2,9 @@
 """OpenCode-Multirun: run a prompt repeatedly and non-interactively with OpenCode.
 
 Invokes "opencode run --format json", optionally inside a nono sandbox with
-a freely chosen profile ("nono run --profile <PROFILE> -- ..."). For every
-run, one row with as many metrics as possible is written to a CSV file.
+a freely chosen profile ("nono run --profile <PROFILE> -- ..."; the sandbox
+and OpenCode commands are configurable). For every run, one row with as many
+metrics as possible is written to a CSV file.
 
 Collected data (excerpt):
   - Total wall-clock duration, agent duration according to event timestamps,
@@ -61,7 +62,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator, NoReturn, Optional, Sequence
 
-__version__ = "1.1.0"
+__version__ = "1.3.0"
 
 # -----------------------------------------------------------------------------
 #  Constants
@@ -95,6 +96,10 @@ EXIT_NOT_EXECUTABLE = 127  # program could not be started (shell convention)
 
 # Wait between SIGTERM and SIGKILL when terminating a run.
 KILL_GRACE_SEC = 10
+
+# Default commands; both can be overridden on the command line.
+DEFAULT_SANDBOX_CMD = "nono run"
+DEFAULT_OPENCODE_CMD = "opencode"
 
 # Time limits for helper calls (version query, export).
 VERSION_TIMEOUT_SEC = 30
@@ -347,7 +352,8 @@ def _apply_event(st: StreamStats, ev: dict, step_parts: list[dict]) -> None:
         st.output_chars += len(str(part.get("text") or ""))
 
 
-def read_export(session_id: str, cwd: Path, target: Path) -> tuple[Optional[Usage], str]:
+def read_export(opencode_cmd: Sequence[str], session_id: str, cwd: Path,
+                target: Path) -> tuple[Optional[Usage], str]:
     """Read the session via "opencode export" from OpenCode's local database.
 
     Deliberately runs outside the sandbox, since it only reads its own
@@ -356,7 +362,7 @@ def read_export(session_id: str, cwd: Path, target: Path) -> tuple[Optional[Usag
     Returns: (Usage, or None on failure; model actually used).
     """
     try:
-        res = subprocess.run(["opencode", "export", session_id], cwd=cwd,
+        res = subprocess.run([*opencode_cmd, "export", session_id], cwd=cwd,
                              capture_output=True, text=True,
                              timeout=EXPORT_TIMEOUT_SEC, stdin=subprocess.DEVNULL)
     except (OSError, subprocess.SubprocessError):
@@ -495,11 +501,15 @@ def build_command(args: argparse.Namespace, prompt: str) -> list[str]:
     prompt or paths are passed safely (no shell involved)."""
     cmd: list[str] = []
     if args.nono_profile:
-        # Everything after "--" is started by nono as a child inside the sandbox.
+        # Everything after "--" is started by the sandbox as a child process.
         # The profile can be local (~/.config/nono/profiles/<name>.json)
-        # or come from the registry (e.g. "nolabs-ai/opencode").
-        cmd += ["nono", "run", "--profile", args.nono_profile, *args.nono_arg, "--"]
-    cmd += ["opencode", "run", "--format", "json"]
+        # or come from the registry (e.g. "nolabs-ai/opencode"). The sandbox
+        # command is configurable because the CLI differs between nono
+        # versions and wrappers (e.g. "nono run" vs. "nono").
+        cmd += [*args.sandbox_cmd, "--profile", args.nono_profile, *args.nono_arg, "--"]
+    if not (args.nono_profile and args.sandbox_is_opencode):
+        cmd += args.opencode_cmd
+    cmd += ["run", "--format", "json"]
     if args.model:
         cmd += ["--model", args.model]
     if args.agent:
@@ -567,6 +577,17 @@ def positive_int(text: str) -> int:
     return value
 
 
+def command_type(text: str) -> list[str]:
+    """argparse type: split a command string into a non-empty argument list."""
+    try:
+        parts = shlex.split(text)
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(f"invalid command: {e}") from None
+    if not parts:
+        raise argparse.ArgumentTypeError("must not be empty")
+    return parts
+
+
 def non_negative_float(text: str) -> float:
     """argparse type: float >= 0."""
     try:
@@ -596,7 +617,19 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("-P", "--nono-profile", default="",
                    help="nono profile; without it OpenCode runs without a sandbox")
     p.add_argument("--nono-arg", action="append", default=[],
-                   help="Additional argument for 'nono run' (repeatable)")
+                   help="Additional argument for the sandbox command (repeatable)")
+    p.add_argument("--sandbox-cmd", type=command_type, default=command_type(DEFAULT_SANDBOX_CMD),
+                   metavar="CMD",
+                   help=f"Sandbox command placed before '--profile' (default: "
+                        f"'{DEFAULT_SANDBOX_CMD}'); e.g. 'nono' or a wrapper script")
+    p.add_argument("--sandbox-is-opencode", action="store_true",
+                   help="The sandbox command already starts OpenCode and forwards everything "
+                        "after '--' to it (e.g. '--sandbox-cmd opencode'); the OpenCode "
+                        "command is then not repeated after '--'")
+    p.add_argument("--opencode-cmd", type=command_type, default=command_type(DEFAULT_OPENCODE_CMD),
+                   metavar="CMD",
+                   help=f"Command that starts OpenCode (default: '{DEFAULT_OPENCODE_CMD}'); "
+                        "e.g. a full path or 'npx opencode-ai'")
     p.add_argument("-m", "--model", default="",
                    help="Model, e.g. anthropic/claude-sonnet-4-5")
     p.add_argument("-a", "--agent", default="",
@@ -692,10 +725,10 @@ def check_prerequisites(args: argparse.Namespace) -> None:
     if os.name != "posix":
         exit_with_error("Only POSIX systems are supported (Linux, macOS, WSL2).")
     if not args.dry_run:
-        if not shutil.which("opencode"):
-            exit_with_error("opencode not found in PATH.")
-        if args.nono_profile and not shutil.which("nono"):
-            exit_with_error("nono not found in PATH, but a profile was given.")
+        if not shutil.which(args.opencode_cmd[0]):
+            exit_with_error(f"{args.opencode_cmd[0]} not found in PATH.")
+        if args.nono_profile and not shutil.which(args.sandbox_cmd[0]):
+            exit_with_error(f"{args.sandbox_cmd[0]} not found in PATH, but a profile was given.")
     if not args.workdir.is_dir():
         exit_with_error(f"Working directory does not exist: {args.workdir}")
 
@@ -719,8 +752,9 @@ def build_context(args: argparse.Namespace, prompt: str) -> BatchContext:
         prompt_preview=one_line(prompt, PROMPT_PREVIEW_CHARS),
         host=socket.gethostname(),
         os_info=f"{platform.system()} {platform.release()}",
-        opencode_version=tool_version(["opencode", "--version"]) if versions_needed else "",
-        nono_version=(tool_version(["nono", "--version"])
+        opencode_version=(tool_version([*args.opencode_cmd, "--version"])
+                          if versions_needed else ""),
+        nono_version=(tool_version([args.sandbox_cmd[0], "--version"])
                       if versions_needed and args.nono_profile else ""),
         excludes=frozenset({log_dir, csv_path}),
     )
@@ -799,7 +833,7 @@ def execute_run(i: int, args: argparse.Namespace, ctx: BatchContext) -> dict[str
     # Cross-check via "opencode export": export values are adopted if they
     # contain at least as many steps as the stream.
     if not args.no_export and st.session_id:
-        x_usage, model_effective = read_export(st.session_id, run_workdir, export_file)
+        x_usage, model_effective = read_export(args.opencode_cmd, st.session_id, run_workdir, export_file)
         if x_usage is not None and x_usage.steps > 0 and x_usage.steps >= usage.steps:
             usage = x_usage
             accounting_source = SOURCE_EXPORT

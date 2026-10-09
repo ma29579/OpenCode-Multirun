@@ -30,6 +30,7 @@ Flow in `main()`: `parse_args` → `load_prompt` → `check_prerequisites` → `
 - `parse_events` / `_apply_event`: evaluates the NDJSON stream; skips non-JSON lines.
 - `read_export`: cross-check via `opencode export <sessionID>`, because the last `step_finish` may be missing from the stream.
 - `run_process` / `terminate_group`: start in a separate process group; SIGTERM on timeout, then SIGKILL.
+- `build_command`: assembles `<sandbox-cmd> --profile P [nono-args] -- <opencode-cmd> run --format json … -- <prompt>`. Sandbox and OpenCode commands are configurable (`--sandbox-cmd`, `--opencode-cmd`, `--sandbox-is-opencode` for launchers that are OpenCode itself) because the nono CLI differs between versions; never hard-code `nono`, `run` or `opencode` elsewhere.
 - `git_metrics`: read-only git calls.
 
 ## Must be observed

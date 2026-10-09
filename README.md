@@ -72,7 +72,10 @@ Before the first real run it is worth checking the generated command:
 | `-f`, `--prompt-file FILE` | – | Read the prompt from a file (UTF-8). |
 | `-n`, `--runs N` | `1` | Number of runs. |
 | `-P`, `--nono-profile NAME` | – | nono profile. Without it, OpenCode runs without a sandbox. Local profiles (`~/.config/nono/profiles/<name>.json`) and registry profiles (e.g. `nolabs-ai/opencode`) are possible. |
-| `--nono-arg ARG` | – | Additional argument for `nono run`. Repeatable. |
+| `--nono-arg ARG` | – | Additional argument for the sandbox command. Repeatable. |
+| `--sandbox-cmd CMD` | `nono run` | Sandbox command placed before `--profile`. Use `nono` for nono versions without a `run` subcommand, or point it to a wrapper. Quote arguments inside CMD like in a shell. |
+| `--sandbox-is-opencode` | off | For setups where the sandbox command itself starts OpenCode and forwards everything after `--` to it (e.g. `opencode --profile abc -- …`). The OpenCode command is then not repeated after `--`. |
+| `--opencode-cmd CMD` | `opencode` | Command that starts OpenCode, e.g. a full path or `npx opencode-ai`. Also used for `--version` and `export`. |
 | `-m`, `--model PROV/MODEL` | OpenCode default | Model in the format `provider/model`. |
 | `-a`, `--agent NAME` | OpenCode default | OpenCode agent, e.g. `build` or `plan`. |
 | `-o`, `--output FILE` | `./opencode-runs.csv` | Target CSV. If it exists, rows are appended. |
@@ -121,6 +124,25 @@ nono profile init my-opencode --extends nolabs-ai/opencode
 # adjust the profile, then:
 ./opencode_multirun.py -f prompt.md -n 5 -P my-opencode
 ```
+
+**Different nono CLI (no `run` subcommand), custom OpenCode path:**
+
+```bash
+./opencode_multirun.py -f prompt.md -n 3 -P my-profile \
+  --sandbox-cmd nono \
+  --opencode-cmd "$HOME/.opencode/bin/opencode"
+# runs: nono --profile my-profile -- /…/opencode run --format json -- <prompt>
+```
+
+**Managed environment with an `opencode` wrapper script** that is always sandboxed by nono and splits its arguments at the first `--` (everything before goes to nono, everything after goes to OpenCode):
+
+```bash
+./opencode_multirun.py -f prompt.md -n 3 \
+  --opencode-cmd "opencode --profile abc --"
+# runs: opencode --profile abc -- run --format json -- <prompt>
+```
+
+Do not use `-P` here, the wrapper already provides the sandbox. The same command line is also produced by `-P abc --sandbox-cmd opencode --sandbox-is-opencode`.
 
 **Pass additional OpenCode options through:**
 
@@ -295,6 +317,7 @@ print(df.groupby("label").status.value_counts(normalize=True).unstack())
 | `opencode not found in PATH` | Install OpenCode or extend the `PATH`. |
 | `expected one argument` for `-p` | The prompt starts with `-`. Use `--prompt="…"` instead. |
 | `accounting_source = none`, `status = error` | Check the run's `stderr.log`. Common causes are a missing API key, an invalid model, or access denied by the nono profile. |
+| `binary 'run' not found` (exit code 127) in `stderr.log` | `run` is taken as the program name. Either your nono version has no `run` subcommand (use `--sandbox-cmd nono`), or an `opencode` wrapper script passes everything before the first `--` to nono (use `--opencode-cmd "opencode --profile abc --"` without `-P`). Check `--dry-run` and the run's `command.txt` for the resulting command. |
 | Runs abort immediately, nono messages in `stderr.log` | The profile does not allow required paths or hosts. Derive your own profile with `nono profile init … --extends …` and extend it. |
 | Runs hang until the timeout | OpenCode is probably waiting for a permission approval (see [Notes](#notes-and-limitations)). |
 | Warning about a differing header | The existing CSV uses a different delimiter or comes from an older version. Use the same `-d` as when it was created, or choose a new file. |
