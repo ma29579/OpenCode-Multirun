@@ -1,8 +1,8 @@
 # OpenCode-Multirun
 
-OpenCode-Multirun (`opencode_multirun.py`) runs a prompt repeatedly and non-interactively with [OpenCode](https://opencode.ai), optionally inside a [nono](https://github.com/nolabs-ai/nono) sandbox with a freely chosen profile, and logs cost, tokens, duration, tool usage, errors and git changes for every run to a CSV file.
+OpenCode-Multirun (`opencode_multirun.py`) runs a prompt repeatedly and non-interactively with [OpenCode](https://opencode.ai), and logs cost, tokens, duration, tool usage, errors and git changes for every run to a CSV file.
 
-The script is meant for **repeated, comparable agent runs**, for example to benchmark different prompts, models, agent configurations or sandbox profiles against each other and to analyze the variance between repetitions.
+The script is meant for **repeated, comparable agent runs**, for example to benchmark different prompts, models, or agent configurations against each other and to analyze the variance between repetitions.
 
 ---
 
@@ -29,7 +29,6 @@ The script is meant for **repeated, comparable agent runs**, for example to benc
 |---|---|---|
 | Python ≥ 3.9 | yes | Runs the script (standard library only) |
 | `opencode` in `PATH` | yes | The actual agent |
-| `nono` in `PATH` | only with `-P` | Sandbox for the agent |
 | `git` | optional | Metrics on file changes |
 
 Supported systems: **Linux, macOS and Windows via WSL2**. Native Windows is not supported because process groups are terminated via POSIX signals.
@@ -47,12 +46,11 @@ No Python packages need to be installed.
 ## Quick start
 
 ```bash
-# Three runs without sandbox, results in ./opencode-runs.csv
+# Three runs, results in ./opencode-runs.csv
 ./opencode_multirun.py -p "Summarize the architecture of this repo" -n 3
 
-# Ten runs in the nono sandbox, each on a fresh copy of the repo
+# Ten runs, each on a fresh copy of the repo
 ./opencode_multirun.py -f prompt.md -n 10 \
-  -P nolabs-ai/opencode \
   -m anthropic/claude-sonnet-4-5 \
   -w ./my-repo --fresh-copy \
   --label "baseline"
@@ -61,7 +59,7 @@ No Python packages need to be installed.
 Before the first real run it is worth checking the generated command:
 
 ```bash
-./opencode_multirun.py -f prompt.md -n 2 -P nolabs-ai/opencode --dry-run
+./opencode_multirun.py -f prompt.md -n 2 --dry-run
 ```
 
 ## Parameters
@@ -71,8 +69,6 @@ Before the first real run it is worth checking the generated command:
 | `-p`, `--prompt TEXT` | – | Prompt as text. Either `-p` or `-f` is required. |
 | `-f`, `--prompt-file FILE` | – | Read the prompt from a file (UTF-8). |
 | `-n`, `--runs N` | `1` | Number of runs. |
-| `-P`, `--nono-profile NAME` | – | nono profile. Without it, OpenCode runs without a sandbox. Local profiles (`~/.config/nono/profiles/<name>.json`) and registry profiles (e.g. `nolabs-ai/opencode`) are possible. |
-| `--nono-arg ARG` | – | Additional argument for `nono run`. Repeatable. |
 | `-m`, `--model PROV/MODEL` | OpenCode default | Model in the format `provider/model`. |
 | `-a`, `--agent NAME` | OpenCode default | OpenCode agent, e.g. `build` or `plan`. |
 | `-o`, `--output FILE` | `./opencode-runs.csv` | Target CSV. If it exists, rows are appended. |
@@ -101,7 +97,7 @@ Before the first real run it is worth checking the generated command:
 ```bash
 for cond in no-context with-agents-md; do
   ./opencode_multirun.py -f "prompts/$cond.md" -n 10 \
-    -w ./repo --fresh-copy -P nolabs-ai/opencode \
+    -w ./repo --fresh-copy \
     --label "$cond" -o comparison.csv -s 5
 done
 ```
@@ -112,14 +108,6 @@ done
 for model in anthropic/claude-sonnet-4-5 openai/gpt-5; do
   ./opencode_multirun.py -f prompt.md -n 5 -m "$model" --fresh-copy -o models.csv
 done
-```
-
-**Custom nono profile based on the official one:**
-
-```bash
-nono profile init my-opencode --extends nolabs-ai/opencode
-# adjust the profile, then:
-./opencode_multirun.py -f prompt.md -n 5 -P my-opencode
 ```
 
 **Pass additional OpenCode options through:**
@@ -140,7 +128,7 @@ opencode-runs/
     ├── run-001/
     │   ├── command.txt     # exact command that was executed
     │   ├── events.jsonl    # NDJSON event stream from OpenCode (stdout)
-    │   ├── stderr.log      # logs from OpenCode and nono
+    │   ├── stderr.log      # logs from OpenCode
     │   ├── export.json     # result of "opencode export" (if available)
     │   └── workspace/      # only with --fresh-copy: working copy after the run
     └── run-002/
@@ -182,9 +170,9 @@ All fields are quoted; the decimal separator is always a period. The header row 
 | `run_index`, `runs_total` | Number of the run and total number in the batch. |
 | `label` | Value of `--label`. |
 | `start_utc`, `end_utc` | Start and end in UTC (ISO 8601). |
-| `duration_s` | Total wall-clock duration including startup of nono and OpenCode. |
+| `duration_s` | Total wall-clock duration including startup of OpenCode. |
 | `agent_duration_s` | Time between first and last event according to OpenCode timestamps. |
-| `time_to_first_event_s` | Time until the first event: sandbox setup, configuration and first model response. |
+| `time_to_first_event_s` | Time until the first event: startup, configuration and first model response. |
 | `exit_code` | Exit code of the process. `124` = timeout, `127` = process could not be started, `128+N` = terminated by signal N. |
 | `status` | `ok`, `error` (exit code ≠ 0 or error event) or `timeout`. |
 
@@ -192,7 +180,6 @@ All fields are quoted; the decimal separator is always a period. The header row 
 
 | Column | Description |
 |---|---|
-| `nono_profile` | nono profile used; empty without sandbox. |
 | `model_requested` | Value of `--model`. |
 | `model_effective` | Model actually used according to the session export. |
 | `agent` | Value of `--agent`. |
@@ -241,7 +228,7 @@ These columns stay empty if the directory is not a git repository.
 | `prompt_chars` | Length of the prompt in characters. |
 | `prompt_preview` | The first 80 characters, on one line. |
 | `workdir` | Working directory of the run. |
-| `opencode_version`, `nono_version` | Tool versions. |
+| `opencode_version` | OpenCode version. |
 | `host`, `os` | Host name and operating system. |
 | `run_log_dir` | Path to the raw data of this run. |
 
@@ -255,7 +242,7 @@ In some OpenCode versions the process can end before the last `step_finish` even
 - `stream` – values from the event stream (export unavailable or disabled)
 - `none` – no accounting data found, e.g. after an immediate abort
 
-The export runs outside the sandbox since it only reads OpenCode's local session data. It can be disabled with `--no-export`.
+The export only reads OpenCode's local session data. It can be disabled with `--no-export`.
 
 **Note on `cost_usd`:** The value is OpenCode's own calculation based on model prices. For subscriptions, local models (e.g. via Ollama) or providers without pricing it can be `0` although tokens were consumed.
 
@@ -284,7 +271,7 @@ print(df.groupby("label").status.value_counts(normalize=True).unstack())
 
 - **Independent repetitions:** Without `--fresh-copy` all runs work in the same directory. Changes from earlier runs then influence later ones, and the git metrics are cumulative. For comparable measurements, `--fresh-copy` should be set.
 - **Log directory inside the working directory:** If the log directory or CSV lies inside `--workdir`, they are excluded when copying. This way the agent never sees earlier results.
-- **Permission prompts:** Depending on the OpenCode version and configuration, a non-interactive run can get stuck on permission prompts. Suitable `permission` settings in the OpenCode configuration or version-dependent flags after `--` help. The nono sandbox limits what the agent is actually allowed to do.
+- **Permission prompts:** Depending on the OpenCode version and configuration, a non-interactive run can get stuck on permission prompts. Suitable `permission` settings in the OpenCode configuration or version-dependent flags after `--` help.
 - **Copy size:** `--fresh-copy` copies the entire directory including `.git` and e.g. `node_modules`. For large repositories this costs time and disk space.
 - **Format changes:** The evaluation tolerates missing fields and non-JSON lines. If OpenCode fundamentally changes the event types, individual columns will stay empty. The raw data in `events.jsonl` is always kept.
 
@@ -294,8 +281,7 @@ print(df.groupby("label").status.value_counts(normalize=True).unstack())
 |---|---|
 | `opencode not found in PATH` | Install OpenCode or extend the `PATH`. |
 | `expected one argument` for `-p` | The prompt starts with `-`. Use `--prompt="…"` instead. |
-| `accounting_source = none`, `status = error` | Check the run's `stderr.log`. Common causes are a missing API key, an invalid model, or access denied by the nono profile. |
-| Runs abort immediately, nono messages in `stderr.log` | The profile does not allow required paths or hosts. Derive your own profile with `nono profile init … --extends …` and extend it. |
+| `accounting_source = none`, `status = error` | Check the run's `stderr.log`. Common causes are a missing API key, an invalid model. |
 | Runs hang until the timeout | OpenCode is probably waiting for a permission approval (see [Notes](#notes-and-limitations)). |
 | Warning about a differing header | The existing CSV uses a different delimiter or comes from an older version. Use the same `-d` as when it was created, or choose a new file. |
 | Excel shows everything in one column | Write with `-d ';'` or import in Excel via *Data → From Text/CSV*. |

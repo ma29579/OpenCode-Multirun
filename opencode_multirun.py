@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """OpenCode-Multirun: run a prompt repeatedly and non-interactively with OpenCode.
 
-Invokes "opencode run --format json", optionally inside a nono sandbox with
-a freely chosen profile ("nono run --profile <PROFILE> -- ..."). For every
-run, one row with as many metrics as possible is written to a CSV file.
+Invokes "opencode run --format json". For every run, one row with as many
+metrics as possible is written to a CSV file.
 
 Collected data (excerpt):
   - Total wall-clock duration, agent duration according to event timestamps,
@@ -14,7 +13,7 @@ Collected data (excerpt):
     length of the text response
   - Exit code, status (ok / error / timeout), session ID, model actually used
   - Git changes in the working directory (files, lines +/-)
-  - Prompt hash, OpenCode and nono versions, host, operating system
+  - Prompt hash, OpenCode version, host, operating system
 
 Background on token and cost accounting:
   With "--format json", OpenCode emits an NDJSON event stream (one JSON
@@ -26,11 +25,11 @@ Background on token and cost accounting:
   stream / export / none).
 
 Requirements: Python >= 3.9 (standard library only), opencode, optionally
-nono and git. Runs on Linux, macOS and WSL2.
+git. Runs on Linux, macOS and WSL2.
 
 Examples:
   ./opencode_multirun.py -p "Explain the class Foo" -n 5
-  ./opencode_multirun.py -f prompt.md -n 10 -P nolabs-ai/opencode \\
+  ./opencode_multirun.py -f prompt.md -n 10 \\
       -m anthropic/claude-sonnet-4-5 -w ./my-repo --fresh-copy \\
       --label "with-AGENTS.md" -o results.csv
   ./opencode_multirun.py -f prompt.md -n 3 -- --agent build
@@ -61,7 +60,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator, NoReturn, Optional, Sequence
 
-__version__ = "1.1.0"
+__version__ = "2.0.0"
 
 # -----------------------------------------------------------------------------
 #  Constants
@@ -74,14 +73,14 @@ CSV_COLUMNS: tuple[str, ...] = (
     "batch_id", "run_index", "runs_total", "label",
     "start_utc", "end_utc", "duration_s", "agent_duration_s", "time_to_first_event_s",
     "exit_code", "status",
-    "nono_profile", "model_requested", "model_effective", "agent", "session_id",
+    "model_requested", "model_effective", "agent", "session_id",
     "steps", "tokens_total", "tokens_input", "tokens_output", "tokens_reasoning",
     "tokens_cache_read", "tokens_cache_write", "cost_usd", "finish_reason", "accounting_source",
     "tool_calls", "tool_errors", "tools_used", "error_events", "error_message",
     "output_chars", "event_count", "stderr_lines",
     "git_files_changed", "git_lines_added", "git_lines_deleted", "git_untracked_lines",
     "prompt_sha256", "prompt_chars", "prompt_preview",
-    "workdir", "opencode_version", "nono_version", "host", "os", "run_log_dir",
+    "workdir", "opencode_version", "host", "os", "run_log_dir",
 )
 
 # Exit codes of the script.
@@ -268,7 +267,6 @@ class BatchContext:
     host: str
     os_info: str
     opencode_version: str
-    nono_version: str
     excludes: frozenset[Path]   # paths to exclude when copying
 
 
@@ -292,7 +290,7 @@ def extract_error_message(err: Any) -> str:
 def parse_events(path: Path) -> StreamStats:
     """Read the NDJSON file produced by "opencode run --format json".
 
-    Lines that are not JSON objects (e.g. nono messages on stdout) are
+    Lines that are not JSON objects (e.g. other tool output on stdout) are
     skipped silently; this keeps the evaluation robust.
     """
     st = StreamStats()
@@ -350,8 +348,7 @@ def _apply_event(st: StreamStats, ev: dict, step_parts: list[dict]) -> None:
 def read_export(session_id: str, cwd: Path, target: Path) -> tuple[Optional[Usage], str]:
     """Read the session via "opencode export" from OpenCode's local database.
 
-    Deliberately runs outside the sandbox, since it only reads its own
-    session data. Some versions print a text line before the JSON, so parsing
+    Only reads OpenCode's own session data. Some versions print a text line before the JSON, so parsing
     starts at the first line beginning with "{".
     Returns: (Usage, or None on failure; model actually used).
     """
@@ -440,7 +437,7 @@ def terminate_group(proc: subprocess.Popen) -> None:
     """Terminate the started process including all child processes.
 
     Because the run is started in its own process group, the signal also
-    reaches nono and the OpenCode process running inside it.
+    reaches all child processes spawned by OpenCode.
     First SIGTERM (clean shutdown), then SIGKILL after KILL_GRACE_SEC.
     """
     for sig, grace in ((signal.SIGTERM, KILL_GRACE_SEC), (signal.SIGKILL, None)):
@@ -461,7 +458,7 @@ def run_process(cmd: Sequence[str], cwd: Path, stdout_path: Path, stderr_path: P
 
     - stdin = /dev/null: OpenCode must neither wait for input nor append the
       contents of stdin to the prompt.
-    - stdout (events) and stderr (logs, nono messages) go to separate files
+    - stdout (events) and stderr (logs) go to separate files
       and are not held in memory.
     - start_new_session=True creates a separate process group so that the
       whole process tree can be terminated on timeout or Ctrl+C.
@@ -493,13 +490,7 @@ def run_process(cmd: Sequence[str], cwd: Path, stdout_path: Path, stderr_path: P
 def build_command(args: argparse.Namespace, prompt: str) -> list[str]:
     """Build the invocation as a list, so spaces and special characters in
     prompt or paths are passed safely (no shell involved)."""
-    cmd: list[str] = []
-    if args.nono_profile:
-        # Everything after "--" is started by nono as a child inside the sandbox.
-        # The profile can be local (~/.config/nono/profiles/<name>.json)
-        # or come from the registry (e.g. "nolabs-ai/opencode").
-        cmd += ["nono", "run", "--profile", args.nono_profile, *args.nono_arg, "--"]
-    cmd += ["opencode", "run", "--format", "json"]
+    cmd = ["opencode", "run", "--format", "json"]
     if args.model:
         cmd += ["--model", args.model]
     if args.agent:
@@ -582,8 +573,7 @@ def build_parser() -> argparse.ArgumentParser:
     """Define all command-line parameters."""
     p = argparse.ArgumentParser(
         prog="opencode_multirun.py",
-        description="Run a prompt repeatedly with OpenCode (optionally in a "
-                    "nono sandbox) and log metrics as CSV.",
+        description="Run a prompt repeatedly with OpenCode and log metrics as CSV.",
         epilog="Everything after '--' is passed to 'opencode run'.")
     p.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
 
@@ -593,10 +583,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     p.add_argument("-n", "--runs", type=positive_int, default=1,
                    help="Number of runs (default: 1)")
-    p.add_argument("-P", "--nono-profile", default="",
-                   help="nono profile; without it OpenCode runs without a sandbox")
-    p.add_argument("--nono-arg", action="append", default=[],
-                   help="Additional argument for 'nono run' (repeatable)")
     p.add_argument("-m", "--model", default="",
                    help="Model, e.g. anthropic/claude-sonnet-4-5")
     p.add_argument("-a", "--agent", default="",
@@ -694,8 +680,6 @@ def check_prerequisites(args: argparse.Namespace) -> None:
     if not args.dry_run:
         if not shutil.which("opencode"):
             exit_with_error("opencode not found in PATH.")
-        if args.nono_profile and not shutil.which("nono"):
-            exit_with_error("nono not found in PATH, but a profile was given.")
     if not args.workdir.is_dir():
         exit_with_error(f"Working directory does not exist: {args.workdir}")
 
@@ -720,8 +704,6 @@ def build_context(args: argparse.Namespace, prompt: str) -> BatchContext:
         host=socket.gethostname(),
         os_info=f"{platform.system()} {platform.release()}",
         opencode_version=tool_version(["opencode", "--version"]) if versions_needed else "",
-        nono_version=(tool_version(["nono", "--version"])
-                      if versions_needed and args.nono_profile else ""),
         excludes=frozenset({log_dir, csv_path}),
     )
 
@@ -736,8 +718,8 @@ def dry_run(args: argparse.Namespace, ctx: BatchContext) -> None:
 
 def derive_timings(st: StreamStats, start_epoch: float) -> tuple[Optional[float], Optional[float]]:
     """Agent duration (first to last event timestamp) and time to first event.
-    The latter includes the startup of nono/OpenCode (sandbox setup,
-    configuration, first model call)."""
+    The latter includes the startup of OpenCode (configuration, first
+    model call)."""
     if st.first_ts is None or st.last_ts is None:
         return None, None
     agent_duration = (st.last_ts - st.first_ts) / 1000
@@ -763,7 +745,7 @@ def execute_run(i: int, args: argparse.Namespace, ctx: BatchContext) -> dict[str
     """
     run_dir = ctx.batch_dir / f"run-{i:03d}"
     events_file = run_dir / "events.jsonl"   # stdout of opencode (NDJSON)
-    stderr_file = run_dir / "stderr.log"     # stderr of opencode/nono
+    stderr_file = run_dir / "stderr.log"     # stderr of opencode
     export_file = run_dir / "export.json"    # result of "opencode export"
     run_dir.mkdir(parents=True, exist_ok=True)
 
@@ -836,7 +818,7 @@ def execute_run(i: int, args: argparse.Namespace, ctx: BatchContext) -> dict[str
         "duration_s": fmt(duration), "agent_duration_s": fmt(agent_duration),
         "time_to_first_event_s": fmt(ttfe),
         "exit_code": exit_code, "status": status,
-        "nono_profile": args.nono_profile, "model_requested": args.model,
+        "model_requested": args.model,
         "model_effective": model_effective, "agent": args.agent,
         "session_id": st.session_id,
         "steps": usage.steps, "tokens_total": usage.tokens_total,
@@ -856,7 +838,7 @@ def execute_run(i: int, args: argparse.Namespace, ctx: BatchContext) -> dict[str
         "prompt_sha256": ctx.prompt_sha256, "prompt_chars": len(ctx.prompt),
         "prompt_preview": ctx.prompt_preview,
         "workdir": str(run_workdir), "opencode_version": ctx.opencode_version,
-        "nono_version": ctx.nono_version, "host": ctx.host, "os": ctx.os_info,
+        "host": ctx.host, "os": ctx.os_info,
         "run_log_dir": str(run_dir),
     }
 
@@ -877,9 +859,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return EXIT_OK
 
     prepare_csv(ctx.csv_path, args.delimiter)
-    logger.info("Batch %s: %d run(s), profile: %s, model: %s",
-                ctx.batch_id, args.runs, args.nono_profile or "<no sandbox>",
-                args.model or "<default>")
+    logger.info("Batch %s: %d run(s), model: %s",
+                ctx.batch_id, args.runs, args.model or "<default>")
     logger.info("CSV: %s  |  raw data: %s", ctx.csv_path, ctx.batch_dir)
 
     results: list[dict[str, Any]] = []

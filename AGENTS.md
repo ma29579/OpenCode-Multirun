@@ -4,7 +4,7 @@ Guidance for AI coding agents (OpenCode, Claude Code, etc.) working in this repo
 
 ## Project overview
 
-OpenCode-Multirun (`opencode_multirun.py`) runs a prompt repeatedly and non-interactively with OpenCode (`opencode run --format json`), optionally inside a nono sandbox, and writes one row of metrics per run (tokens, cost, duration, tool usage, git changes) to a CSV file. It is developed as part of a master's thesis; results must be **reproducible and comparable**.
+OpenCode-Multirun (`opencode_multirun.py`) runs a prompt repeatedly and non-interactively with OpenCode (`opencode run --format json`), and writes one row of metrics per run (tokens, cost, duration, tool usage, git changes) to a CSV file. It is developed as part of a master's thesis; results must be **reproducible and comparable**.
 
 Files:
 
@@ -19,7 +19,7 @@ Files:
 - Python ≥ 3.9, **no dependencies beyond the standard library**. Do not add new packages.
 - Supported: Linux, macOS, WSL2 (POSIX). Native Windows is excluded (process groups via `os.killpg`).
 - Syntax check: `python3 -m py_compile opencode_multirun.py`
-- Preview commands without running: `./opencode_multirun.py -p "test" -n 2 -P nolabs-ai/opencode --dry-run`
+- Preview commands without running: `./opencode_multirun.py -p "test" -n 2 --dry-run`
 - There is no automated test suite. To test without real API costs, put a fake `opencode` (a shell script printing NDJSON lines) first in `PATH` and write to a temporary directory (`-o`, `-l`).
 
 ## Architecture (`opencode_multirun.py`)
