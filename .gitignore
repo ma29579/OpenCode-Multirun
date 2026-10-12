@@ -7,7 +7,7 @@ opencode-runs/
 # --- Local configuration and secrets -----------------------------------
 .env
 .env.*
-opencode.json
+!.env.example
 .opencode/
 
 # --- Python -----------------------------------------------------------------

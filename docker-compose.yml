@@ -1,0 +1,78 @@
+# Local LLM stack for the pilot study:
+#   - ollama      : local model server (coding model + embedding model)
+#   - ollama-pull : one-shot job that downloads both models into the ollama volume
+#   - docs-mcp    : docs-mcp-server (Web UI, API and MCP endpoint), embeddings via ollama
+#
+# Usage:
+#   docker compose up -d          # start everything (first start downloads the models)
+#   docker compose logs -f ollama-pull
+#   docker compose down           # stop; volumes (models, indexed docs) are kept
+#   docker compose down -v        # stop and delete all volumes
+#
+# Model names can be changed in a .env file (see .env.example).
+# Note: if the embedding model is changed, docs that were already indexed must be
+# re-indexed, because vectors from different models are not comparable.
+
+name: opencode-multirun
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    environment:
+      # Agents need a large context window; Ollama's default is too small for
+      # reliable tool calls (OpenCode docs recommend 16k-32k).
+      OLLAMA_CONTEXT_LENGTH: ${OLLAMA_CONTEXT_LENGTH:-32768}
+    volumes:
+      - ollama-data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  ollama-pull:
+    image: ollama/ollama:latest
+    container_name: ollama-pull
+    depends_on:
+      ollama:
+        condition: service_healthy
+    restart: "no"
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+      CODING_MODEL: ${CODING_MODEL:-qwen2.5-coder:7b}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text:latest}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        ollama pull "$$CODING_MODEL"
+        ollama pull "$$EMBEDDING_MODEL"
+        ollama list
+
+  docs-mcp:
+    image: ghcr.io/arabold/docs-mcp-server:latest
+    container_name: docs-mcp
+    restart: unless-stopped
+    depends_on:
+      ollama-pull:
+        condition: service_completed_successfully
+    ports:
+      - "6280:6280"
+    environment:
+      # Ollama's OpenAI-compatible endpoint; the API key is not checked but must be set.
+      OPENAI_API_KEY: ollama
+      OPENAI_API_BASE: http://ollama:11434/v1
+      DOCS_MCP_EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text:latest}
+    volumes:
+      - docs-mcp-data:/data
+      - docs-mcp-config:/config
+
+volumes:
+  ollama-data:
+  docs-mcp-data:
+  docs-mcp-config:
