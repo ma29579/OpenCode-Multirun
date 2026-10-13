@@ -1,7 +1,5 @@
 # Database Modeling Guidelines
 
-Rules for the relational schema of the farm application. Every rule has an ID (e.g. "violates DB-03").
-
 ## 1. Naming
 
 - **DB-01 Table names** are lowercase `snake_case` and **plural**: `horses`, `cows`, `stables`, `feeds`.

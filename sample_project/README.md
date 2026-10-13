@@ -1,44 +1,30 @@
-# Farm
+# Farm database
 
-Spring Boot application that manages a farm: animals (horses, cows, donkeys, pigs, goats, sheep, rabbits), the stables they live in, and the feed that is in stock.
+PostgreSQL schema of a farm management application: animals (horses, cows, donkeys, pigs, goats, sheep, rabbits), stables, feed, deliveries, veterinary care, daily operations and staff.
 
-## Technology
+## Layout
 
-- Java 25, Spring Boot 4.1, Maven
-- Spring Web, Spring Data JPA, Bean Validation
-- H2 in-memory database
-
-## Architecture
-
-Three layers below `com.example.farm`:
-
-| Package | Responsibility |
+| Path | Content |
 |---|---|
-| `controller` | REST endpoints |
-| `service` | business logic |
-| `repository` | data access (Spring Data JPA) |
-| `model` | JPA entities |
-| `dto` | request and response objects |
-| `exception` | exceptions and the central error handler |
+| `db/migrations/` | versioned migration scripts, applied in the order of their version number |
+| `db/scripts/` | scripts that were run by hand |
 
-## Run and test
+| Migration | Content |
+|---|---|
+| `V1__create_reference_tables.sql` | stables, employees, suppliers, `updated_at` helper function |
+| `V2__create_animal_tables.sql` | the animal tables |
+| `V3__create_feed_tables.sql` | feed and feed deliveries |
+| `V4__create_health_tables.sql` | veterinarians, treatments, vaccinations |
+| `V5__create_operation_tables.sql` | feedings, milk yields, shearings, stable assignments |
+| `V6__create_triggers_and_views.sql` | `updated_at` triggers, extra indexes, reporting views |
+| `V7__seed_reference_data.sql` | sample data |
 
-Requires a JDK 25 and Maven.
+## Apply the migrations
+
+With a PostgreSQL 15 or newer database:
 
 ```bash
-mvn spring-boot:run
-mvn test
+for f in db/migrations/V*.sql; do psql -v ON_ERROR_STOP=1 -f "$f" "$DATABASE_URL"; done
 ```
 
-The application listens on port 8080. The data is kept in memory and lost on restart.
-
-## Main endpoints
-
-| Resource | Path |
-|---|---|
-| Horses | `/api/v1/horses` |
-| Cows | `/api/v1/cows` |
-| Donkeys | `/api/v1/donkeys` |
-| Stables | `/api/v1/stables` |
-| Feed | `/api/v1/feeds` |
-| Pigs, goats, sheep, rabbits | see the controllers |
+The files are named for Flyway and can also be applied with it.

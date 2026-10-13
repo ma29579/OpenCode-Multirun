@@ -1,329 +1,343 @@
 # Overview of the built-in guideline violations
 
-The sample project in `sample_project/` deliberately violates the rules in `sample_guidelines/`. The first part of this document is **grouped by guideline rule**; the second part lists the same findings **per class** with a description of each violation. Use it as ground truth to evaluate findings.
+The sample project in `sample_project/` is a database definition (PostgreSQL migrations). It deliberately violates the rules of the database guidelines in `sample_guidelines/`. This document lists every violation and can be used as ground truth to evaluate findings. Keep it outside of `sample_project/` so that an agent working on a copy of the project does not see it.
 
-It is kept outside of `sample_project/` so that an agent working on a copy of the project does not see it. Rule IDs refer to `sample_guidelines/`; class names are relative to `src/main/java/com/example/farm/`.
+| Document | Role | Rule IDs |
+|---|---|---|
+| [`database-guidelines.md`](sample_guidelines/database-guidelines.md) | base guideline | `DB-01` … `DB-21` |
+| [`database-standards.md`](sample_guidelines/database-standards.md) | **extends** the base guideline with additional aspects, no conflicts | `STD-01` … `STD-12` |
+| [`database-design-conventions.md`](sample_guidelines/database-design-conventions.md) | **contradicts** the base guideline (and partly the standards) on purpose | `DES-01` … `DES-18` |
+
+Migration files are in `sample_project/db/migrations/`, manually applied scripts in `sample_project/db/scripts/`.
 
 ## Summary
 
-| Guideline | Rules | Deliberately violated | No deliberate violation | Findings |
-|---|---:|---:|---:|---:|
-| API (`api-guidelines.md`) | 18 | 13 | 5 | 31 |
-| Architecture (`architecture-guidelines.md`) | 18 | 14 | 4 | 26 |
-| Coding conventions (`coding-conventions.md`) | 25 | 19 | 6 | 44 |
-| Database (`database-guidelines.md`) | 21 | 16 | 5 | 38 |
-| **Total** | **82** | **62** | **20** | **139** |
+| Guideline | Rules | Deliberately violated | Findings |
+|---|---:|---:|---:|
+| Base (`DB`) | 21 | 21 | 71 |
+| Standards (`STD`) | 12 | 10 | 22 |
+| Design conventions (`DES`) | 18 | – | see [conflicts](#part-3-conflicts-of-the-design-conventions) |
 
-A *finding* is one violation of one rule in one place; a rule can be violated several times.
+A *finding* is one violation of one rule in one place. The findings of the base guideline and of the standards are counted separately; the design conventions are not a source of findings but of **conflicts** (see below).
 
-## Gaps that apply to the whole project (not deliberate)
+## Part 1: Base guideline (`DB`)
 
-Some rules are not met anywhere in the project, not even in the otherwise compliant `Horse`, `Cow`, `Donkey` and `Stable` stack. They are not counted as findings above:
+### Violations by rule
 
-- **API-15** (filtering and sorting): no endpoint offers filter parameters; only paging parameters (`page`, `size`, `sort`) exist.
-- **API-18** (OpenAPI documentation): no endpoint is documented with OpenAPI annotations.
-- **DB-19** (explicit delete behavior): foreign keys do not define `ON DELETE` behavior explicitly.
-- **CODE-24** (Javadoc): the compliant stack only has Javadoc on the services and the base entities, not on every public class.
-
-## API
-
-| Rule | Guideline | Findings | Where |
+| Rule | Guideline | Findings | Tables |
 |---|---|---:|---|
-| API-01 | Versioned base path | 1 | GoatController |
-| API-02 | Nouns, not verbs | 3 | FeedController; GoatController; PigController |
-| API-03 | Plural, lowercase, kebab-case | 2 | PigController; SheepController |
-| API-05 | Actions that do not map to CRUD | 1 | FeedController |
-| API-06 | Method semantics | 1 | FeedController |
-| API-07 | Status codes | 3 | GoatController; PigController; SheepController |
-| API-08 | No success status for failures | 5 | FeedController; GoatController; PigController; RabbitController; SheepController |
-| API-09 | DTOs only | 5 | FeedController; GoatController; PigController; RabbitController; SheepController |
-| API-10 | JSON naming | 1 | RabbitController |
-| API-12 | Money and quantities | 1 | FeedController |
-| API-13 | Input validation | 3 | FeedController; GoatController; SheepController |
-| API-14 | Pagination | 3 | FeedController; GoatController; SheepController |
-| API-16 | One error format | 2 | SheepService; all controllers except Horse, Cow, Donkey, Stable |
+| DB-01 | Table names | 3 | `tbl_pig`, `feed`, `stable_assignment` |
+| DB-02 | Column names | 2 | `tbl_pig`, `feed` |
+| DB-03 | Primary key | 3 | `tbl_pig`, `rabbits`, `stable_assignment` |
+| DB-04 | Foreign keys | 1 | `stable_assignment` |
+| DB-05 | Constraint and index names | 5 | `tbl_pig`, `small_livestock`, `rabbits`, `shearings`, `feed (index)` |
+| DB-06 | No reserved words | 1 | `feed` |
+| DB-07 | Money and measured quantities | 6 | `tbl_pig`, `small_livestock`, `rabbits`, `feed`, `treatments`, `shearings` |
+| DB-08 | Dates and times | 4 | `small_livestock`, `feed`, `treatments`, `shearings` |
+| DB-09 | Enumerations | 4 | `tbl_pig`, `small_livestock`, `feed`, `treatments` |
+| DB-10 | Booleans | 2 | `tbl_pig`, `small_livestock` |
+| DB-11 | Text columns have a length | 4 | `tbl_pig`, `rabbits`, `feed`, `treatments` |
+| DB-12 | `NOT NULL` is the default | 6 | `tbl_pig`, `small_livestock`, `rabbits`, `feed`, `shearings`, `stable_assignment` |
+| DB-13 | Natural keys are unique | 3 | `feed`, `veterinarians`, `stable_assignment` |
+| DB-14 | Relations through foreign keys | 4 | `small_livestock`, `feed`, `treatments`, `feedings` |
+| DB-15 | `CHECK` constraints | 6 | `tbl_pig`, `small_livestock`, `rabbits`, `feed`, `treatments`, `shearings` |
+| DB-16 | No denormalized lists | 2 | `feed`, `treatments` |
+| DB-17 | One table per entity type | 3 | `tbl_pig`, `small_livestock`, `rabbits` |
+| DB-18 | Audit columns | 7 | `tbl_pig`, `small_livestock`, `rabbits`, `feed`, `treatments`, `shearings`, `stable_assignment` |
+| DB-19 | Delete behavior is explicit | 3 | `tbl_pig`, `treatments`, `shearings` |
+| DB-20 | Migrations | 1 | `feed` |
+| DB-21 | Seed data | 1 | `tbl_pig` |
 
-**No deliberate violation:** API-04 (Hierarchy only where it expresses ownership); API-11 (Dates and times); API-15 (Filtering and sorting); API-17 (No internal details); API-18 (Every endpoint is documented with OpenAPI annotations or an equivalent)
+### Violations by table
 
-## Architecture
+### `tbl_pig` (V2__create_animal_tables.sql)
 
-| Rule | Guideline | Findings | Where |
+| Rule | Violation |
+|---|---|
+| DB-01 | Prefix `tbl_` and singular name |
+| DB-02 | Quoted camelCase identifiers `"pigId"`, `"pigName"`, `"ageInMonths"` |
+| DB-03 | Primary key `"pigId"` is an `INTEGER` without identity, not `id BIGINT` |
+| DB-05 | Primary key and foreign key have no explicit names; index `pig_index1` does not follow `idx_<table>_<column>` |
+| DB-07 | `target_weight_kg` is `DOUBLE PRECISION` |
+| DB-09 | `fattening_phase` stores an enum as `SMALLINT` ordinal, without `CHECK` |
+| DB-10 | `is_fattened` is `CHAR(1)` with 'Y'/'N' |
+| DB-11 | `"pigName"` is `VARCHAR` without a length |
+| DB-12 | All columns except the primary key are nullable |
+| DB-15 | No `CHECK` constraints (weight, age) |
+| DB-17 | Shared attributes differ from the other animal tables (`"pigName"`, `"ageInMonths"` instead of `name`, `birth_date`; no `weight_kg`) |
+| DB-18 | No `created_at` / `updated_at` |
+| DB-19 | Foreign key `stable_id` has no `ON DELETE` clause |
+| DB-21 | Seed rows are inserted inside the schema migration |
+
+### `small_livestock` (V2__create_animal_tables.sql)
+
+| Rule | Violation |
+|---|---|
+| DB-05 | Primary key has no explicit name |
+| DB-07 | `weight`, `daily_milk_liters`, `wool_yield_kg` are `DOUBLE PRECISION` |
+| DB-08 | `born` is `VARCHAR(20)` instead of `DATE` |
+| DB-09 | `animal_type` ('GOAT'/'SHEEP') has no `CHECK` constraint |
+| DB-10 | `horned` is `CHAR(1)` |
+| DB-12 | Most columns are nullable |
+| DB-14 | `stable` holds the name of the stable instead of a foreign key |
+| DB-15 | No `CHECK` constraints |
+| DB-17 | Goats and sheep share one table with species-specific columns; column names differ (`title`, `born`, `weight`, `stable`) |
+| DB-18 | No `created_at` / `updated_at` |
+
+### `rabbits` (V2__create_animal_tables.sql)
+
+| Rule | Violation |
+|---|---|
+| DB-03 | `SERIAL` primary key is a 32-bit `INTEGER` |
+| DB-05 | Primary key and foreign key have no explicit names |
+| DB-07 | `weight_kg` is `REAL` |
+| DB-11 | `breed` is `TEXT` without a limit |
+| DB-12 | All columns except the primary key are nullable |
+| DB-15 | No `CHECK` constraints |
+| DB-17 | `weight_kg` has a different type than in the other animal tables |
+| DB-18 | No `created_at` / `updated_at` |
+
+### `feed` (V3__create_feed_tables.sql)
+
+| Rule | Violation |
+|---|---|
+| DB-01 | Singular table name |
+| DB-02 | Quoted identifiers `"group"`, `"desc"` |
+| DB-06 | Reserved words `"group"` and `"desc"` as column names |
+| DB-07 | `quantity_kg` and `price_per_kg` are `DOUBLE PRECISION` (money as floating point) |
+| DB-08 | `expiration_date` is `VARCHAR(10)` |
+| DB-09 | `type` is an `INTEGER` ordinal, without `CHECK` |
+| DB-11 | `"desc"` is `TEXT` without a limit |
+| DB-12 | Quantity, price, dates and text columns are nullable |
+| DB-13 | `name` is not unique |
+| DB-14 | `supplier_id` is a plain number without foreign key |
+| DB-15 | No `CHECK` constraints (quantity, price) |
+| DB-16 | `allowed_animals` holds a comma separated list |
+| DB-18 | No `created_at` / `updated_at` |
+
+### `veterinarians` (V4__create_health_tables.sql)
+
+| Rule | Violation |
+|---|---|
+| DB-13 | `license_number` identifies a veterinarian but is not unique |
+
+### `treatments` (V4__create_health_tables.sql)
+
+| Rule | Violation |
+|---|---|
+| DB-07 | `cost` is `FLOAT` |
+| DB-08 | `treatment_date` is a `BIGINT` of epoch seconds |
+| DB-09 | `animal_type` has no `CHECK` constraint |
+| DB-11 | `notes` is `TEXT` without a limit |
+| DB-14 | `animal_type` + `animal_id` reference one of several animal tables without a foreign key |
+| DB-15 | No `CHECK` constraints (cost) |
+| DB-16 | `medication_list` holds a comma separated list |
+| DB-18 | No `created_at` / `updated_at` |
+| DB-19 | `ON DELETE CASCADE` from `veterinarians`: deleting a veterinarian deletes the treatment history |
+
+### `feedings` (V5__create_operation_tables.sql)
+
+| Rule | Violation |
+|---|---|
+| DB-14 | `animal_type` + `animal_id` reference one of several animal tables without a foreign key |
+
+### `shearings` (V5__create_operation_tables.sql)
+
+| Rule | Violation |
+|---|---|
+| DB-05 | Primary key and foreign key have no explicit names |
+| DB-07 | `wool_kg` is `DOUBLE PRECISION` |
+| DB-08 | `sheared_on` is `VARCHAR(10)` |
+| DB-12 | `wool_kg` is nullable |
+| DB-15 | No `CHECK` constraints |
+| DB-18 | No `created_at` / `updated_at` |
+| DB-19 | Foreign key `sheep_id` has no `ON DELETE` clause |
+
+### `stable_assignment` (V5__create_operation_tables.sql)
+
+| Rule | Violation |
+|---|---|
+| DB-01 | Singular table name |
+| DB-03 | Table has no primary key |
+| DB-04 | `employee_id` and `stable_id` have no foreign keys and are `INTEGER` instead of `BIGINT` |
+| DB-12 | All columns are nullable |
+| DB-13 | No unique constraint; the seed data already contains a duplicate row |
+| DB-18 | No `created_at` / `updated_at` |
+
+### `feed (index)` (V6__create_triggers_and_views.sql)
+
+| Rule | Violation |
+|---|---|
+| DB-05 | Index `feed_name_idx` does not follow `idx_<table>_<column>` |
+
+### `feed` (hotfix_feed_storage.sql)
+
+| Rule | Violation |
+|---|---|
+| DB-20 | `ALTER TABLE` and `UPDATE` run by hand outside of the versioned migrations |
+
+## Part 2: Standards (`STD`)
+
+The standards are consistent with the base guideline. Rules without a finding: STD-06 (Triggers), STD-12 (Every migration starts with a header comment).
+
+### Violations by rule
+
+| Rule | Guideline | Findings | Tables |
 |---|---|---:|---|
-| ARCH-01 | Strict direction | 1 | DonkeyService, DonkeyMapper |
-| ARCH-02 | One service per controller | 1 | GoatController |
-| ARCH-03 | No repositories in controllers | 1 | PigController |
-| ARCH-04 | No business logic in controllers | 2 | GoatController; RabbitController |
-| ARCH-05 | No web types in services | 1 | SheepService |
-| ARCH-09 | Classes live in the package of their role | 1 | DonkeyService, DonkeyMapper |
-| ARCH-10 | Entities stay inside the service layer | 3 | GoatController; PigController; SheepController |
-| ARCH-12 | Transactions belong to the service layer | 2 | FeedService; RabbitController |
-| ARCH-13 | A business operation is one transaction | 1 | FeedService |
-| ARCH-14 | Constructor injection only | 7 | FeedController; FeedService; GoatController; GoatService; PigController; PigService; RabbitService |
-| ARCH-15 | No mutable static state | 1 | FeedService |
-| ARCH-16 | Central exception handling | 2 | SheepController; all controllers except Horse, Cow, Donkey, Stable |
-| ARCH-17 | Configuration is externalized | 2 | GoatService; application.properties |
-| ARCH-18 | Database schema is managed by migrations | 1 | application.properties |
+| STD-01 | Index every foreign key | 6 | `feedings`, `horse_vaccinations`, `rabbits`, `shearings`, `treatments` |
+| STD-02 | Name composite objects completely | 1 | `horse_vaccinations` |
+| STD-03 | Comment tables and columns | 1 | `all tables` |
+| STD-04 | Personal data is marked | 2 | `employees`, `veterinarians` |
+| STD-05 | Views | 3 | `stable_occupancy (view)`, `feed_stock_value (view)`, `monthly_milk_yield (view)` |
+| STD-06 | Triggers | 0 | – |
+| STD-07 | Boolean columns | 2 | `employees`, `small_livestock` |
+| STD-08 | Date and time columns | 2 | `small_livestock`, `stable_assignment` |
+| STD-09 | Measured quantities end with their unit | 1 | `small_livestock` |
+| STD-10 | Money columns end with the currency code in lowercase | 3 | `feed`, `feed_deliveries`, `treatments` |
+| STD-11 | One kind of change per migration | 1 | `tbl_pig` |
+| STD-12 | Every migration starts with a header comment | 0 | – |
 
-**No deliberate violation:** ARCH-06 (No business logic in repositories); ARCH-07 (Services may use several repositories); ARCH-08 (Package by layer); ARCH-11 (Entities contain data and simple invariants only)
+### Violations by table
 
-## Coding conventions
+### `feedings` (V5__create_operation_tables.sql)
 
-| Rule | Guideline | Findings | Where |
-|---|---|---:|---|
-| CODE-01 | English only | 1 | GoatService |
-| CODE-03 | Methods and variables | 2 | PigController; Rabbit |
-| CODE-05 | Meaningful names | 4 | FeedController; FeedService; PigService; RabbitService |
-| CODE-07 | Boolean names | 2 | FeedService; Goat |
-| CODE-09 | Braces | 1 | SheepController |
-| CODE-10 | Indentation | 1 | PigController |
-| CODE-13 | Imports | 5 | Goat; GoatController; PigController; SheepController; SheepService |
-| CODE-14 | Short methods | 2 | FeedService; RabbitController |
-| CODE-15 | No code duplication | 2 | HorseService, CowService, DonkeyService; SheepService |
-| CODE-16 | No magic numbers or strings | 5 | FeedService; GoatService; PigService; RabbitController; SheepService |
-| CODE-17 | Parameters | 3 | AnimalCounter; FeedController; FeedService |
-| CODE-18 | No unused code | 3 | FeedService; PigController; PigService |
-| CODE-19 | Exceptions | 3 | FeedService; RabbitService; SheepController |
-| CODE-20 | Specific exceptions | 1 | GoatService |
-| CODE-21 | No `null` collections | 3 | GoatService; RabbitService |
-| CODE-22 | Comparison | 1 | SheepService |
-| CODE-23 | Logging | 1 | GoatService |
-| CODE-24 | Javadoc | 3 | GoatController; PigService; SheepService |
-| CODE-25 | TODO comments | 1 | FeedService |
-
-**No deliberate violation:** CODE-02 (Classes, interfaces and enums); CODE-04 (Constants); CODE-06 (No abbreviations); CODE-08 (Packages); CODE-11 (Line length); CODE-12 (One statement per line)
-
-## Database
-
-| Rule | Guideline | Findings | Where |
-|---|---|---:|---|
-| DB-01 | Table names | 4 | Feed; Goat; Pig; Sheep |
-| DB-02 | Column names | 5 | Feed; Goat; Pig; Sheep; application.properties |
-| DB-03 | Primary key | 1 | Pig |
-| DB-04 | Foreign keys | 1 | Goat |
-| DB-05 | Constraint and index names | 2 | Pig; Rabbit |
-| DB-07 | Money and measured quantities | 5 | Feed; Goat; Pig; Rabbit; Sheep |
-| DB-08 | Dates and times | 2 | Feed; Sheep |
-| DB-09 | Enumerations | 1 | Feed |
-| DB-11 | Text columns have a length | 1 | Goat |
-| DB-12 | `NOT NULL` is the default | 4 | Goat; Pig; Rabbit; Sheep |
-| DB-13 | Natural keys are unique | 2 | Feed; Goat |
-| DB-14 | Relations through foreign keys | 2 | Goat; Sheep |
-| DB-15 | `CHECK` constraints | 1 | Feed |
-| DB-16 | No denormalized lists | 1 | Feed |
-| DB-18 | Audit columns | 5 | Feed; Goat; Pig; Rabbit; Sheep |
-| DB-20 | Migrations | 1 | application.properties |
-
-**No deliberate violation:** DB-06 (No reserved words); DB-10 (Booleans); DB-17 (One table per entity type); DB-19 (Delete behavior is explicit); DB-21 (Seed data)
-
-## Number of findings per class
-
-| Class | Findings |
-|---|---:|
-| `GoatController` | 13 |
-| `PigController` | 12 |
-| `FeedService` | 12 |
-| `FeedController` | 11 |
-| `SheepController` | 11 |
-| `Goat` | 11 |
-| `Feed` | 9 |
-| `RabbitController` | 7 |
-| `GoatService` | 7 |
-| `SheepService` | 7 |
-| `Sheep` | 7 |
-| `Pig` | 7 |
-| `PigService` | 5 |
-| `RabbitService` | 5 |
-| `Rabbit` | 5 |
-| `application.properties` | 4 |
-| `DonkeyService` | 3 |
-| `DonkeyMapper` | 2 |
-| `HorseService` | 1 |
-| `CowService` | 1 |
-| `AnimalCounter` | 1 |
-
-## The compliant part (reference)
-
-`Horse`, `Cow`, `Donkey` and `Stable` (entity, repository, DTOs, service, controller) are written according to the guidelines, so that the violations stand out. Two minor, unintended-but-realistic weaknesses remain in that part: `HorseService`, `CowService` and `DonkeyService` (and their controllers) are near copies of each other (CODE-15), and `AnimalCounter` has a constructor with 7 parameters (CODE-17). The `Donkey` stack has one deliberate violation (see below).
-
-## Details per class
-
-### `controller/GoatController.java`
 | Rule | Violation |
 |---|---|
-| ARCH-02 | Depends on `GoatService` **and** `FeedService` |
-| ARCH-04 | Business logic in the controller: consumes feed for every new goat |
-| ARCH-14 | Field injection with `@Autowired` |
-| ARCH-10, API-09 | Entity `Goat` is received and returned directly |
-| API-01 | Path `/api/goats` has no version |
-| API-02 | Verbs in paths: `/getAll`, `/createGoat` |
-| API-07 | Create returns `200`; delete returns `200` with the text `deleted` |
-| API-08 | `GET /{id}` returns `200` with an empty body when the goat does not exist |
-| API-13, API-14 | No validation, no pagination |
-| CODE-13 | Wildcard import `org.springframework.web.bind.annotation.*` |
-| CODE-24 | No Javadoc |
-| Behavior | Hard-coded feed id `1L` and ration `2.5`; consuming a missing feed is silently ignored |
+| STD-01 | Foreign key `employee_id` has no index |
 
-### `service/GoatService.java`
+### `horse_vaccinations` (V4__create_health_tables.sql)
+
 | Rule | Violation |
 |---|---|
-| CODE-01 | German identifier `anzahlTiere` and German messages |
-| CODE-16, ARCH-17 | Magic number `8` as capacity; the capacity of the stable is ignored |
-| CODE-20 | Throws bare `RuntimeException` |
-| CODE-23 | `System.out.println` instead of a logger |
-| ARCH-14 | Field injection |
-| CODE-21 | `orElse(null)` instead of an exception |
+| STD-01 | Foreign key `vaccination_type_id` has no index (the unique constraint starts with `horse_id`) |
+| STD-01 | Foreign key `veterinarian_id` has no index |
+| STD-02 | `uq_horse_vaccinations_horse_id_type_date` abbreviates the column `vaccination_type_id` and the date column |
 
-### `model/Goat.java`
+### `rabbits` (V2__create_animal_tables.sql)
+
 | Rule | Violation |
 |---|---|
-| DB-01 | Table name `Goat` (capitalized, singular) |
-| DB-02 | camelCase columns (`hornFlag`, `stableId`, `DailyMilkLiters`) |
-| DB-07 | `double` for weight and milk |
-| DB-11, DB-12, DB-13 | No lengths, no `NOT NULL`, name not unique |
-| DB-14, DB-04 | `stableId` is a plain `Long`, no foreign key |
-| DB-18 | No audit columns |
-| CODE-07 | Boolean field named `hornFlag` |
-| CODE-13 | Wildcard import `jakarta.persistence.*` |
+| STD-01 | Foreign key `stable_id` has no index |
 
-### `controller/SheepController.java`
+### `shearings` (V5__create_operation_tables.sql)
+
 | Rule | Violation |
 |---|---|
-| CODE-09 | Allman braces (opening brace on its own line) |
-| CODE-13 | Wildcard import `org.springframework.web.bind.annotation.*` |
-| CODE-19, ARCH-16 | Catches `Exception` and builds the error response itself |
-| API-03 | Path `/api/v1/Sheep` is capitalized |
-| API-07, API-08 | Failures returned as `200 OK` with text; create returns `200`; delete returns `200` with text |
-| API-09, ARCH-10 | Entity exposed |
-| API-14, API-13 | No pagination, no validation |
+| STD-01 | Foreign key `sheep_id` has no index |
 
-### `service/SheepService.java`
+### `treatments` (V4__create_health_tables.sql)
+
 | Rule | Violation |
 |---|---|
-| ARCH-05 | Returns `ResponseEntity` and uses `HttpStatus` |
-| API-16 | Errors are plain text, not problem details |
-| CODE-13 | Wildcard import `java.util.*` and unused import `java.io.IOException` |
-| CODE-22 | Strings compared with `== ""` |
-| CODE-15 | Validation and capacity check duplicated in `add` and `update` |
-| CODE-16 | Magic number `12` as capacity |
-| CODE-24 | No Javadoc |
+| STD-01 | Foreign key `veterinarian_id` has no index |
+| STD-10 | `cost` has no currency suffix |
 
-### `model/Sheep.java`
+### `all tables` (all migrations)
+
 | Rule | Violation |
 |---|---|
-| DB-01 | Table name `Sheep` |
-| DB-02 | camelCase columns, prefixed column `SheepName` |
-| DB-07 | `double` woolYieldKg |
-| DB-08 | `birthDate` stored as `String` |
-| DB-14 | Stable referenced by name (`stableName`), no foreign key |
-| DB-12, DB-18 | No `NOT NULL`, no audit columns |
+| STD-03 | No `COMMENT ON TABLE` / `COMMENT ON COLUMN` anywhere in the schema (19 tables) |
 
-### `controller/PigController.java`
+### `employees` (V1__create_reference_tables.sql)
+
 | Rule | Violation |
 |---|---|
-| ARCH-03 | Injects and uses `PigRepository` directly |
-| ARCH-14 | Field injection |
-| API-02, API-03 | Path `/api/v1/pigList` (camelCase, "list" in the name) |
-| API-07, API-08 | Create returns `200`; missing pig returns `200` with empty body |
-| API-09, ARCH-10 | Entity exposed |
-| CODE-10 | Tab indentation |
-| CODE-18 | Commented-out method |
-| CODE-13 | Unused import `java.util.ArrayList` |
-| CODE-03 | Methods named `all`, `one` (no verbs) |
+| STD-04 | `first_name`, `last_name`, `email`, `phone` hold personal data and are not marked with `PII:` |
+| STD-07 | Boolean column `active` has no `is_` / `has_` prefix |
 
-### `service/PigService.java`
+### `veterinarians` (V4__create_health_tables.sql)
+
 | Rule | Violation |
 |---|---|
-| CODE-18 | Class is never used by the controller (dead code) |
-| CODE-05 | Parameter `p`, variable `x` |
-| CODE-16 | Magic numbers `25.0` and `0.75` |
-| CODE-24 | Javadoc does not match the method |
-| ARCH-14 | Field injection |
+| STD-04 | `first_name`, `last_name`, `phone`, `email` hold personal data and are not marked with `PII:` |
 
-### `model/Pig.java`
+### `stable_occupancy (view)` (V6__create_triggers_and_views.sql)
+
 | Rule | Violation |
 |---|---|
-| DB-01 | Table name `tbl_pig` (prefix, singular) |
-| DB-03 | Primary key `pigId` of type `INTEGER` |
-| DB-02 | camelCase columns |
-| DB-05 | Foreign key without explicit name |
-| DB-07, DB-12, DB-18 | `double` weight, no `NOT NULL`, no audit columns |
+| STD-05 | View name does not start with `v_` |
 
-### `controller/RabbitController.java`
+### `feed_stock_value (view)` (V6__create_triggers_and_views.sql)
+
 | Rule | Violation |
 |---|---|
-| ARCH-04 | Offspring forecast (business logic) implemented in the controller |
-| ARCH-12 | `@Transactional` on the controller |
-| CODE-14 | Long method with deep nesting |
-| CODE-16 | Magic numbers (`0.8`, `2.0`, `1.0`, `12`, `6`) |
-| API-10 | Response keys `expected_offspring`, `expected_adults` in snake_case |
-| API-08 | Missing rabbit returns `200` with an error map |
-| API-09 | Entity exposed |
+| STD-05 | View name does not start with `v_` |
 
-### `service/RabbitService.java`
+### `monthly_milk_yield (view)` (V6__create_triggers_and_views.sql)
+
 | Rule | Violation |
 |---|---|
-| CODE-21 | Returns `null` instead of an empty list |
-| CODE-19 | Empty `catch` block; `printStackTrace()`; catches `Exception` |
-| CODE-21 | `Optional.get()` without check, then `null` |
-| CODE-05 | Parameter `r` |
-| ARCH-14 | Field injection |
+| STD-05 | View name does not start with `v_` |
 
-### `model/Rabbit.java`
+### `small_livestock` (V2__create_animal_tables.sql)
+
 | Rule | Violation |
 |---|---|
-| CODE-03 | Java fields `litter_size`, `weight_kg` in snake_case (also leaks into JSON, API-10) |
-| DB-07, DB-12, DB-18 | `double` weight, no `NOT NULL`, no audit columns |
-| DB-05 | Foreign key without explicit name |
+| STD-07 | Flag column `horned` has no `is_` / `has_` prefix |
+| STD-08 | `born` does not end with `_date` or `_on` |
+| STD-09 | `weight` has no unit suffix (`weight_kg`) |
 
-### `service/FeedService.java`
+### `stable_assignment` (V5__create_operation_tables.sql)
+
 | Rule | Violation |
 |---|---|
-| ARCH-15 | Mutable `static` cache that returns stale objects |
-| ARCH-12, ARCH-13 | `consume` reads, changes and saves without a transaction |
-| ARCH-14 | Field injection |
-| CODE-14, CODE-17, CODE-16 | `calculateMonthlyCost` is long, deeply nested, has 7 parameters and many magic numbers |
-| CODE-05 | Variables `tmp`, `f`, `d` |
-| CODE-07 | Boolean variable `flag` |
-| CODE-19 | Empty `catch` block |
-| CODE-18 | Commented-out code |
-| CODE-25 | `TODO` without ticket |
-| Behavior | Stock can become negative; expired feed is not checked on consumption |
+| STD-08 | `since` does not end with `_date` or `_on` |
 
-### `controller/FeedController.java`
+### `feed` (V3__create_feed_tables.sql)
+
 | Rule | Violation |
 |---|---|
-| API-06, API-02, API-05 | `GET /consume` changes data; verb in path |
-| API-08 | Missing feed returns `200` with empty body |
-| API-09, API-12 | Entity exposed; money as `double` |
-| CODE-05, CODE-17 | `/cost` takes 7 one-letter parameters (`h`, `c`, `p`, `g`, `s`, `r`, `d`) |
-| ARCH-14 | Field injection |
-| API-14, API-13 | No pagination, no validation |
+| STD-10 | `price_per_kg` has no currency suffix |
 
-### `model/Feed.java`
+### `feed_deliveries` (V3__create_feed_tables.sql)
+
 | Rule | Violation |
 |---|---|
-| DB-01, DB-02 | Table `Feed`, camelCase columns |
-| DB-09 | Enum `type` stored by ordinal |
-| DB-07 | `double` for quantity and price |
-| DB-16 | `allowedAnimals` is a comma-separated list |
-| DB-08 | `expirationDate` stored as `String` |
-| DB-13, DB-15, DB-18 | Name not unique, no check constraints, no audit columns |
+| STD-10 | `total_price` has no currency suffix |
 
-### `service/DonkeyService.java` and `controller/DonkeyMapper.java`
+### `tbl_pig` (V2__create_animal_tables.sql)
+
 | Rule | Violation |
 |---|---|
-| ARCH-01 | The service imports a class from the `controller` package (dependency points upwards) |
-| ARCH-09 | The mapper lives in the `controller` package although only the service uses it |
+| STD-11 | `V2` creates tables and also inserts data |
 
-### `src/main/resources/application.properties`
-| Rule | Violation |
-|---|---|
-| ARCH-18, DB-20 | `ddl-auto=update`, no migration tool |
-| DB-02 | `PhysicalNamingStrategyStandardImpl` keeps camelCase and capitalized names |
-| ARCH-17 | Limits (stable sizes) are code literals, not properties |
+## Part 3: Conflicts of the design conventions
 
-## Findings that affect several classes
+The design conventions contradict the base guideline on purpose. Neither document states which one wins. Several tables that violate the base guideline (Part 1) **comply** with the design conventions. The matrix lists for every design rule which rules it conflicts with and which tables follow the design rule.
 
-- **Inconsistent error handling (API-16, ARCH-16):** only `Horse`, `Cow`, `Donkey` and `Stable` use the central `GlobalExceptionHandler`.
-- **Inconsistent capacity rules:** `StableService` uses `Stable.capacity`; `GoatService` (8) and `SheepService` (12) use their own literals; pigs and rabbits have no check at all.
-- **Inconsistent stable references:** FK (`Horse`, `Cow`, `Donkey`, `Pig`, `Rabbit`), plain id (`Goat`), name (`Sheep`). `AnimalCounter` has to special-case this.
+| Design rule | Design convention | Conflicts with | Contradiction | Tables that follow the design rule |
+|---|---|---|---|---|
+| DES-01 | Table names | DB-01 | Singular names with prefix `tbl_` vs. plural names without prefix | `tbl_pig` |
+| DES-02 | Column names | DB-02 | `camelCase` columns vs. `snake_case` columns | `tbl_pig` |
+| DES-02 | Column names | STD-07, STD-08, STD-09 | `camelCase` (e.g. `ageInMonths`) vs. suffix rules written in `snake_case` (`_at`, `_kg`, `is_`) | `tbl_pig` |
+| DES-03 | Primary keys | DB-03 | `<entity>Id` as 32-bit integer vs. `id BIGINT` identity | `tbl_pig` |
+| DES-04 | Constraint and index names | DB-05 | Database-generated names vs. explicit names following a pattern | `tbl_pig`, `small_livestock`, `rabbits`, `shearings` |
+| DES-04 | Constraint and index names | STD-02 | Database-generated names vs. complete names of composite objects | – |
+| DES-05 | No foreign key constraints | DB-04, DB-14 | Plain id columns without foreign keys vs. real foreign keys for every relation | `feed`, `small_livestock`, `treatments`, `feedings`, `stable_assignment` |
+| DES-05 | No foreign key constraints | STD-01 | No foreign keys vs. every foreign key is indexed | `feed`, `stable_assignment` |
+| DES-06 | Deletes cascade | DB-19 | `ON DELETE CASCADE` vs. `RESTRICT` by default | `treatments` |
+| DES-07 | Quantities and money | DB-07 | `DOUBLE PRECISION` for quantities and money vs. `DECIMAL` | `tbl_pig`, `small_livestock`, `feed`, `treatments`, `shearings` |
+| DES-08 | Dates | DB-08 | Dates as `VARCHAR(10)` vs. native `DATE` | `small_livestock`, `feed`, `shearings` |
+| DES-09 | Enumerations | DB-09 | Enumerations as integers vs. strings with `CHECK` | `tbl_pig`, `feed` |
+| DES-10 | Flags | DB-10 | Flags as `CHAR(1)` 'Y'/'N' vs. `BOOLEAN` | `tbl_pig`, `small_livestock` |
+| DES-11 | Text columns | DB-11 | Text without length allowed vs. `VARCHAR(n)` with limit | `tbl_pig`, `rabbits`, `feed`, `treatments` |
+| DES-12 | Columns are nullable by default | DB-12 | Nullable by default vs. `NOT NULL` by default | `tbl_pig`, `small_livestock`, `rabbits`, `feed`, `stable_assignment` |
+| DES-13 | No `CHECK` constraints | DB-15 | No `CHECK` constraints vs. `CHECK` constraints for simple rules | `tbl_pig`, `small_livestock`, `rabbits`, `feed`, `treatments`, `shearings` |
+| DES-14 | Small lists | DB-16 | Comma separated lists allowed vs. atomic values | `feed`, `treatments` |
+| DES-15 | Similar species share a table | DB-17 | Similar species in one table vs. one table per species | `small_livestock` |
+| DES-16 | Audit columns | DB-18 | Audit columns only on user-edited tables vs. on every table | `treatments`, `shearings`, `stable_assignment` |
+| DES-17 | Hotfixes by script | DB-20 | Schema hotfixes by script vs. only versioned migrations | `db/scripts/hotfix_feed_storage.sql` (but it has no ticket reference, which DES-17 requires) |
+| DES-18 | Seed data | DB-21, STD-11 | Seed data in the creating migration vs. seed data in separate migrations / no DDL and DML together | `tbl_pig` (`V2`) |
+
+- Every one of the 18 design rules is part of at least one conflict.
+- The tables `tbl_pig`, `small_livestock`, `feed`, `treatments`, `rabbits`, `shearings` and `stable_assignment` follow the design conventions in many places and violate the base guideline in the same places.
+- The tables of the base-compliant stack (`stables`, `horses`, `cows`, `donkeys`, ...) violate the design conventions throughout (plural names, `snake_case`, `BIGINT id`, foreign keys, `CHECK`s, `DECIMAL`, `BOOLEAN`).
+
+## Tables without deliberate violations of the base guideline
+
+`stables`, `employees`, `suppliers`, `horses`, `cows`, `donkeys`, `feed_deliveries`, `vaccination_types`, `horse_vaccinations`, `milk_yields` (and `veterinarians`, `feedings` apart from the findings above). They are not free of findings against the standards (Part 2).
+
+## Gaps in the schema that are not deliberate
+
+- `stable_occupancy` has to special-case the different stable references (foreign key, stable name) and `feed_stock_value` inherits the floating point money of `feed`.
+- Seed data in `V7__seed_reference_data.sql` is in a separate migration as required by DB-21 and STD-11, but uses fixed ids (`feed_id = 1`, `animal_id = 1`) that rely on the insert order.
