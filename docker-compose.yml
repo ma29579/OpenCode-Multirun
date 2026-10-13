@@ -71,6 +71,8 @@ services:
     volumes:
       - docs-mcp-data:/data
       - docs-mcp-config:/config
+      # the guidelines of the study; indexed with study/index-knowledge.sh
+      - ./sample_guidelines:/docs:ro
 
 volumes:
   ollama-data:

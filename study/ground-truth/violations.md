@@ -4,9 +4,9 @@ The sample project in `sample_project/` is a database definition (PostgreSQL mig
 
 | Document | Role | Rule IDs |
 |---|---|---|
-| [`database-guidelines.md`](sample_guidelines/database-guidelines.md) | base guideline | `DB-01` … `DB-21` |
-| [`database-standards.md`](sample_guidelines/database-standards.md) | **extends** the base guideline with additional aspects, no conflicts | `STD-01` … `STD-12` |
-| [`database-design-conventions.md`](sample_guidelines/database-design-conventions.md) | **contradicts** the base guideline (and partly the standards) on purpose | `DES-01` … `DES-18` |
+| [`database-guidelines.md`](../../sample_guidelines/database-guidelines.md) | base guideline | `DB-01` … `DB-21` |
+| [`database-standards.md`](../../sample_guidelines/database-standards.md) | **extends** the base guideline with additional aspects, no conflicts | `STD-01` … `STD-12` |
+| [`database-design-conventions.md`](../../sample_guidelines/database-design-conventions.md) | **contradicts** the base guideline (and partly the standards) on purpose | `DES-01` … `DES-18` |
 
 Migration files are in `sample_project/db/migrations/`, manually applied scripts in `sample_project/db/scripts/`.
 

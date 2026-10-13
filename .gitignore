@@ -1,5 +1,5 @@
-# --- Script output (default paths) ---------------------------------
-# Raw data per run (events.jsonl, export.json, stderr.log, workspace/ ...)
+# --- Results of the study runs ---------------------------------------
+results/
 opencode-runs/
 # Result CSVs may contain prompts, paths and host names
 *.csv

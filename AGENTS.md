@@ -1,61 +1,52 @@
 # AGENTS.md
 
-Guidance for AI coding agents (OpenCode, Claude Code, etc.) working in this repository.
+Guidance for AI coding agents (OpenCode, Claude Code, etc.) that work **on this repository**. The repository itself is the setup of a pilot study in which other agents are measured; keep that in mind before every change.
 
 ## Project overview
 
-OpenCode-Multirun (`opencode_multirun.py`) runs a prompt repeatedly and non-interactively with OpenCode (`opencode run --format json`), and writes one row of metrics per run (tokens, cost, duration, tool usage, git changes) to a CSV file. It is developed as part of a master's thesis; results must be **reproducible and comparable**.
+A pilot study for a master's thesis: how does an agent handle a prompt and the knowledge that is provided to it? The tool `tools/opencode_multirun.py` runs a prompt several times with OpenCode and records quantitative metrics. The agent under test works on `sample_project/` (a PostgreSQL schema with deliberate violations) and gets the guidelines from `sample_guidelines/` in different forms. See `README.md` for the study design.
 
-Files:
-
-| File | Purpose |
+| Path | Purpose |
 |---|---|
-| `opencode_multirun.py` | The entire program (single file, standard library only) |
-| `README.md` | User documentation (parameters, CSV columns, examples) |
-| `AGENTS.md` | This file |
+| `tools/opencode_multirun.py` | the measuring tool (single file, standard library only) |
+| `study/` | prompts, configuration, condition runner, ground truth |
+| `sample_project/` | object of the study: `db/migrations/*.sql`, `db/scripts/*.sql` |
+| `sample_guidelines/` | the knowledge given to the agent under test |
+| `docker-compose.yml`, `.env.example` | Ollama (two models) and the docs MCP server |
 
-## Environment and commands
+## Keep the study valid
 
-- Python ≥ 3.9, **no dependencies beyond the standard library**. Do not add new packages.
-- Supported: Linux, macOS, WSL2 (POSIX). Native Windows is excluded (process groups via `os.killpg`).
-- Syntax check: `python3 -m py_compile opencode_multirun.py`
-- Preview commands without running: `./opencode_multirun.py -p "test" -n 2 --dry-run`
-- There is no automated test suite. To test without real API costs, put a fake `opencode` (a shell script printing NDJSON lines) first in `PATH` and write to a temporary directory (`-o`, `-l`).
+1. **Never leak the ground truth.** `study/ground-truth/` must not be copied into `sample_project/`, `sample_guidelines/`, `study/prompts/` or `study/config/`, and no file the agent under test can see may mention the built-in violations. Do not add comments such as "bad", "wrong" or "violates" to the sample SQL.
+2. **Keep the relation of the guidelines hidden.** Names, titles and rule IDs of the three guideline files are neutral on purpose. Do not add descriptions that say that one guideline extends or contradicts another. The relation belongs only into the ground truth.
+3. **Keep prompts identical across conditions.** A prompt must not name a specific guideline or file; the conditions differ only in the provided knowledge.
+4. **Changing the sample changes the ground truth.** If you change a migration or a guideline, update `study/ground-truth/violations.md` in the same change and verify the migrations (see below).
+5. **Do not delete data of finished runs.** `results/` is ignored by git; never overwrite a result file. A new study uses a new `--out` directory.
 
-## Architecture (`opencode_multirun.py`)
+## The tool (`tools/opencode_multirun.py`)
 
-Flow in `main()`: `parse_args` → `load_prompt` → `check_prerequisites` → `build_context` → per run `execute_run` → `append_csv_row` → `print_summary`.
+- Python ≥ 3.9, **standard library only**, POSIX only (process groups via `os.killpg`).
+- Flow: `parse_args` → `main` → per run `execute_run` (copy workspace, add files, git baseline, run `opencode run --format json`, evaluate stream and export, collect changes, append CSV row).
+- Every run works in its own copy of the working directory. The original must never be changed.
+- Failed runs are measurement data: the tool exits with `0`. Exit codes: `0` ok, `1` configuration error, `2` invalid parameters, `130` Ctrl+C.
+- `CSV_COLUMNS` is the contract of the result files. Changing it requires a new `__version__` and a note in `README.md`.
+- Pass commands to `subprocess` as lists, never as shell strings. The prompt follows `--`.
+- The evaluation must cope with missing fields and unknown event types (`as_dict`, `num`). Raw data (`events.jsonl`, `response.txt`, `changes.patch`) is always kept.
+- Keep the tool small. Do not add options that the study does not use.
+- Comments, docstrings and messages in English; identifiers in snake_case; type annotations; keep `from __future__ import annotations`.
 
-- `Usage`, `StreamStats`, `BatchContext`: dataclasses for measurements and invocation context.
-- `parse_events` / `_apply_event`: evaluates the NDJSON stream; skips non-JSON lines.
-- `read_export`: cross-check via `opencode export <sessionID>`, because the last `step_finish` may be missing from the stream.
-- `run_process` / `terminate_group`: start in a separate process group; SIGTERM on timeout, then SIGKILL.
-- `git_metrics`: read-only git calls.
+## Commands
 
-## Must be observed
+```bash
+python3 -m py_compile tools/opencode_multirun.py      # syntax check
+docker compose config -q                              # validate the compose file
+bash -n study/run.sh study/index-knowledge.sh         # validate the shell scripts
+```
 
-1. **The CSV format is a contract.** Columns and their order in `CSV_COLUMNS` must not change. Existing result files continue to be appended to and must stay compatible. New columns only with explicit approval; append them at the end and update the README.
-2. **Status and source values stay unchanged:** `status` ∈ `ok`/`error`/`timeout`, `accounting_source` ∈ `stream`/`export`/`none`, exit code `124` for timeout. Analyses in R/pandas depend on these.
-3. **Failed runs are measurement data.** The script still exits with code 0. Exit codes: `0` ok, `1` configuration error, `2` invalid parameters (argparse), `130` Ctrl+C.
-4. **No shell strings.** Always pass commands to `subprocess` as a list; the prompt follows `--` so that a leading `-` is not treated as an option.
-5. **Robustness over strictness:** The evaluation must cope with missing fields and unknown event types (`as_dict`, `num`). Raw data (`events.jsonl`, `export.json`, `stderr.log`) is always kept.
-6. **Write completed runs to the CSV immediately**, so an abort does not lose data.
-7. **Do not weaken `--fresh-copy`:** the log directory and CSV are excluded when copying so the agent never sees earlier results.
+There is no automated test suite. To test the tool without real model calls, put a fake `opencode` (a shell script that prints NDJSON events and changes files in its working directory) first in `PATH` and write to a temporary `--out` directory.
 
-## Code style
-
-- Comments, docstrings, log and error messages in **English**; identifiers and CSV column names in snake_case.
-- Type annotations throughout; keep `from __future__ import annotations` (Python 3.9).
-- Magic numbers as named constants at the top of the file.
-- Status output via `logger`; summary and dry-run commands go to stderr; stdout stays free.
-- Comments explain *why*, not *what*. Do not remove documented decisions (e.g. `perf_counter` vs. `time`) without reason.
-- Keep changes small; no restructuring without a request.
-
-## Keeping documentation current
-
-If a parameter, CSV column, exit code or behavior changes, update `README.md` and the module docstring in the same change. Bump `__version__` on behavior changes.
+To verify the SQL, apply `sample_project/db/migrations/V*.sql` in order to a throw-away PostgreSQL database, e.g. `docker run --rm -d -e POSTGRES_PASSWORD=x postgres:17-alpine`, and stop the container afterwards.
 
 ## Caution
 
-- Real runs incur API costs and modify the working directory. Without `--fresh-copy` the agent works directly in the given `--workdir`. Use `--dry-run` or a fake `opencode` to verify.
-- Do not commit or echo API keys, session exports or result CSVs containing prompts.
+- Real runs cost time and, with cloud models, money. Use a fake `opencode` for verification.
+- Do not commit API keys, `.env` files or result files that contain prompts.

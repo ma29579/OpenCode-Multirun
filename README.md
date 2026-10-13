@@ -1,290 +1,140 @@
 # OpenCode-Multirun
 
-OpenCode-Multirun (`opencode_multirun.py`) runs a prompt repeatedly and non-interactively with [OpenCode](https://opencode.ai), and logs cost, tokens, duration, tool usage, errors and git changes for every run to a CSV file.
+Pilot study for a master's thesis: **How does a coding agent handle a prompt and the knowledge that is provided to it?**
 
-The script is meant for **repeated, comparable agent runs**, for example to benchmark different prompts, models, or agent configurations against each other and to analyze the variance between repetitions.
+The agent ([OpenCode](https://opencode.ai) with a local model) gets a task on a small database project. The task stays the same, the knowledge changes: no guidelines, one guideline, an extended set, a conflicting set, and the same guidelines through an MCP server instead of files. Every combination is run several times. A small script runs the agent and records quantitative metrics; the results of the agent are compared with a known ground truth afterwards.
 
----
+## Study design
 
-## Contents
+| | |
+|---|---|
+| **Task** (prompt) | `review-schema` (find violations), `add-tables` (write new migration), `fix-feed-table` (rework a table) |
+| **Knowledge** (condition) | `none`, `base`, `standards`, `all` (conflicting rules), `mcp` (all guidelines through an MCP server) |
+| **Object** | a PostgreSQL schema (`sample_project/`) that deliberately violates the guidelines |
+| **Repetitions** | several runs per combination, because the output of an agent varies |
+| **Model** | a local model served by Ollama |
 
-- [Requirements](#requirements)
-- [Installation](#installation)
-- [Quick start](#quick-start)
-- [Parameters](#parameters)
-- [Examples](#examples)
-- [Output](#output)
-- [CSV columns](#csv-columns)
-- [How tokens and cost are collected](#how-tokens-and-cost-are-collected)
-- [Analysis with pandas](#analysis-with-pandas)
-- [Notes and limitations](#notes-and-limitations)
-- [Troubleshooting](#troubleshooting)
-- [License](#license)
+| Condition | The agent gets |
+|---|---|
+| `none` | nothing besides the task |
+| `base` | `database-guidelines.md` as file in the workspace |
+| `standards` | the base guideline plus `database-standards.md` |
+| `all` | all three guideline files, including `database-design-conventions.md` |
+| `mcp` | all three guidelines through the `docs` MCP server (no files) |
 
----
+What the guidelines contain and how they relate to each other is deliberately **not** stated in the guideline files. It is documented in the ground truth (see below).
 
-## Requirements
+## Repository layout
 
-| Component | Required | Purpose |
-|---|---|---|
-| Python ≥ 3.9 | yes | Runs the script (standard library only) |
-| `opencode` in `PATH` | yes | The actual agent |
-| `git` | optional | Metrics on file changes |
+| Path | Content |
+|---|---|
+| `tools/opencode_multirun.py` | the measuring tool: runs a prompt n times and records metrics |
+| `study/prompts/` | the tasks |
+| `study/config/` | OpenCode configuration and project notes that are copied into the workspace |
+| `study/run.sh` | runs one condition with one prompt |
+| `study/index-knowledge.sh` | indexes the guidelines into the MCP server |
+| `study/ground-truth/violations.md` | every built-in violation and the conflicts between the guidelines |
+| `sample_project/` | the database project the agent works on |
+| `sample_guidelines/` | the guidelines (knowledge) |
+| `docker-compose.yml` | Ollama with two models and the docs MCP server |
+| `results/` | output of the runs (not in git) |
 
-Supported systems: **Linux, macOS and Windows via WSL2**. Native Windows is not supported because process groups are terminated via POSIX signals.
+`study/ground-truth/` must never be copied into a workspace or shown to an agent.
 
-## Installation
+## Setup
+
+Requirements: Docker, [OpenCode](https://opencode.ai), Python ≥ 3.9, git. Linux, macOS or WSL2.
 
 ```bash
-chmod +x opencode_multirun.py
-# optionally make it available globally
-ln -s "$PWD/opencode_multirun.py" ~/.local/bin/opencode-multirun
+cp .env.example .env              # optional: choose the models
+docker compose up -d              # Ollama (coding and embedding model) and the MCP server
+docker compose logs -f ollama-pull  # the first start downloads the models
+study/index-knowledge.sh          # only needed for the condition "mcp"
 ```
 
-No Python packages need to be installed.
+The defaults are `qwen2.5-coder:7b` (coding) and `nomic-embed-text` (embeddings). The context window of Ollama is raised to 32k tokens, because tool calls are unreliable with the default.
 
-## Quick start
+## Run an experiment
 
 ```bash
-# Three runs, results in ./opencode-runs.csv
-./opencode_multirun.py -p "Summarize the architecture of this repo" -n 3
-
-# Ten runs, each on a fresh copy of the repo
-./opencode_multirun.py -f prompt.md -n 10 \
-  -m anthropic/claude-sonnet-4-5 \
-  -w ./my-repo --fresh-copy \
-  --label "baseline"
+study/run.sh <condition> <prompt> [runs]
 ```
-
-Before the first real run it is worth checking the generated command:
 
 ```bash
-./opencode_multirun.py -f prompt.md -n 2 --dry-run
+study/run.sh none review-schema 5
+study/run.sh base review-schema 5
+study/run.sh all add-tables 5
+MODEL=ollama/qwen2.5-coder:14b study/run.sh mcp fix-feed-table 3
 ```
 
-## Parameters
+Each run works on its **own copy** of `sample_project/`, so runs are independent and the original is never changed. The knowledge of the condition is added to the copy. Everything after the third argument is passed to the tool, e.g. `-t 3600` for a longer time limit.
 
-| Parameter | Default | Description |
-|---|---|---|
-| `-p`, `--prompt TEXT` | – | Prompt as text. Either `-p` or `-f` is required. |
-| `-f`, `--prompt-file FILE` | – | Read the prompt from a file (UTF-8). |
-| `-n`, `--runs N` | `1` | Number of runs. |
-| `-m`, `--model PROV/MODEL` | OpenCode default | Model in the format `provider/model`. |
-| `-a`, `--agent NAME` | OpenCode default | OpenCode agent, e.g. `build` or `plan`. |
-| `-o`, `--output FILE` | `./opencode-runs.csv` | Target CSV. If it exists, rows are appended. |
-| `-l`, `--log-dir DIR` | `./opencode-runs` | Location of the raw data per run. |
-| `-w`, `--workdir DIR` | current directory | Working directory of the agent. |
-| `--fresh-copy` | off | Every run works on its own copy of `--workdir` (including `.git`). |
-| `-t`, `--timeout SEC` | no limit | Time limit per run. Then SIGTERM, after 10 s SIGKILL. |
-| `-s`, `--sleep SEC` | `0` | Pause between runs, e.g. because of rate limits. |
-| `--label TEXT` | – | Free text to label the experimental condition. |
-| `-d`, `--delimiter C` | `,` | CSV delimiter. Use `;` for German Excel. |
-| `--no-export` | off | Skip the cross-check via `opencode export` (see below). |
-| `--dry-run` | off | Only show the commands; run and write nothing. |
-| `--version` | – | Print the script version. |
-| `-- ARGS…` | – | Everything after `--` is passed to `opencode run` unchanged. |
-
-**Prompt starts with `-`?** Use the equals-sign form, otherwise argparse mistakes it for an option:
+To use the tool directly:
 
 ```bash
-./opencode_multirun.py --prompt="-v should enable verbose logs. Implement that." -n 2
+tools/opencode_multirun.py -f study/prompts/review-schema.md -n 5 -m ollama/qwen2.5-coder:7b \
+  -w sample_project --label base \
+  --add study/config/opencode.json:opencode.json \
+  --add sample_guidelines/database-guidelines.md:guidelines/
 ```
 
-## Examples
-
-**Compare experimental conditions** – several invocations write to the same CSV and are distinguished by `--label`:
-
-```bash
-for cond in no-context with-agents-md; do
-  ./opencode_multirun.py -f "prompts/$cond.md" -n 10 \
-    -w ./repo --fresh-copy \
-    --label "$cond" -o comparison.csv -s 5
-done
-```
-
-**Compare several models:**
-
-```bash
-for model in anthropic/claude-sonnet-4-5 openai/gpt-5; do
-  ./opencode_multirun.py -f prompt.md -n 5 -m "$model" --fresh-copy -o models.csv
-done
-```
-
-**Pass additional OpenCode options through:**
-
-```bash
-./opencode_multirun.py -f prompt.md -n 3 -- --agent plan
-```
-
-## Output
-
-### Directory structure
-
-Every invocation forms a **batch** with a unique ID (`<UTC timestamp>-<PID>`):
-
-```
-opencode-runs/
-└── 20261002T155622Z-4711/
-    ├── run-001/
-    │   ├── command.txt     # exact command that was executed
-    │   ├── events.jsonl    # NDJSON event stream from OpenCode (stdout)
-    │   ├── stderr.log      # logs from OpenCode
-    │   ├── export.json     # result of "opencode export" (if available)
-    │   └── workspace/      # only with --fresh-copy: working copy after the run
-    └── run-002/
-        └── …
-```
-
-The working copies are kept. This allows checking afterwards what the agent actually changed, e.g. with `git -C run-001/workspace diff`.
-
-### Console
-
-Status messages appear on stderr while the runs are in progress. At the end a summary follows with sum, mean, median and standard deviation (sd, from two runs on):
-
-```
-Summary: 10 runs, 9 ok
-  Cost       sum 1.8421 USD  mean 0.1842  median 0.1790  sd 0.0312
-  Duration   sum 812.4 s  mean 81.2  median 78.9  sd 12.7
-  Tokens     sum 1843210  mean 184321  median 179044  sd 30112
-  Tool calls sum 214.0  mean 21.4  median 20.0  sd 4.1
-```
-
-### Exit codes of the script
-
-| Code | Meaning |
+| Option | Meaning |
 |---|---|
-| `0` | All runs were executed. Failed runs count as measurement data, not as a script error. |
-| `1` | Configuration error (e.g. `opencode` not found, prompt file missing). |
-| `2` | Invalid parameters. |
-| `130` | Aborted with Ctrl+C. All runs completed up to that point are already in the CSV. |
+| `-f`, `--prompt-file` | file with the prompt (required) |
+| `-n`, `--runs` | number of runs (default 1) |
+| `-m`, `--model` | model, e.g. `ollama/qwen2.5-coder:7b` |
+| `-w`, `--workdir` | directory that is copied for every run (default: current directory) |
+| `--add SRC[:DEST]` | copy a file or directory into every workspace; with a trailing `/` DEST is a directory |
+| `--label` | name of the condition |
+| `-o`, `--out` | output directory (default `results`) |
+| `-t`, `--timeout` | time limit per run in seconds (default 1800) |
 
-## CSV columns
+## Results
 
-All fields are quoted; the decimal separator is always a period. The header row is only written if the file is new or empty.
+```
+results/
+├── runs.csv                 one row per run
+└── <batch>/run-001/
+    ├── response.txt         final answer of the agent (e.g. the review report)
+    ├── changes.patch        everything the agent changed in the workspace
+    ├── events.jsonl         complete event stream of OpenCode
+    ├── stderr.log, export.json, command.txt
+    └── workspace/           the working copy after the run
+```
 
-### Run and time
+`runs.csv` contains these columns:
 
-| Column | Description |
+| Group | Columns |
 |---|---|
-| `batch_id` | ID of the invocation; groups related runs. |
-| `run_index`, `runs_total` | Number of the run and total number in the batch. |
-| `label` | Value of `--label`. |
-| `start_utc`, `end_utc` | Start and end in UTC (ISO 8601). |
-| `duration_s` | Total wall-clock duration including startup of OpenCode. |
-| `agent_duration_s` | Time between first and last event according to OpenCode timestamps. |
-| `time_to_first_event_s` | Time until the first event: startup, configuration and first model response. |
-| `exit_code` | Exit code of the process. `124` = timeout, `127` = process could not be started, `128+N` = terminated by signal N. |
-| `status` | `ok`, `error` (exit code ≠ 0 or error event) or `timeout`. |
+| Identification | `batch_id`, `run_index`, `label` (condition), `prompt`, `model_requested`, `model_effective`, `session_id`, `prompt_sha256`, `opencode_version`, `run_dir` |
+| Time and status | `start_utc`, `end_utc`, `duration_s`, `status` (`ok`, `error`, `timeout`), `exit_code`, `error_message` |
+| Tokens and cost | `steps`, `tokens_total`, `tokens_input`, `tokens_output`, `tokens_reasoning`, `tokens_cache_read`, `tokens_cache_write`, `cost_usd`, `accounting_source` |
+| Behavior | `tool_calls`, `tool_errors`, `tools_used` (`;`-separated, MCP tools show up with their name), `output_chars` |
+| Changes | `files_changed`, `lines_added`, `lines_deleted` |
 
-### Configuration
+Tokens and cost come from the event stream. Because the last event is missing in some OpenCode versions, the tool also reads `opencode export` and uses it if it is more complete (`accounting_source`). With local models `cost_usd` is `0`; tokens are still counted.
 
-| Column | Description |
-|---|---|
-| `model_requested` | Value of `--model`. |
-| `model_effective` | Model actually used according to the session export. |
-| `agent` | Value of `--agent`. |
-| `session_id` | OpenCode session ID, e.g. for `opencode export`. |
-
-### Tokens and cost
-
-| Column | Description |
-|---|---|
-| `steps` | Number of agent steps (`step_finish` events). |
-| `tokens_total` | Sum of all tokens **including** cache. |
-| `tokens_input`, `tokens_output`, `tokens_reasoning` | Uncached input, output and reasoning tokens. |
-| `tokens_cache_read`, `tokens_cache_write` | Tokens read from or written to the prompt cache. |
-| `cost_usd` | Cost in USD as calculated by OpenCode (6 decimal places). |
-| `finish_reason` | Reason the last step ended, e.g. `stop` or `tool-calls`. |
-| `accounting_source` | Origin of token and cost values: `export`, `stream` or `none`. |
-
-### Agent behavior
-
-| Column | Description |
-|---|---|
-| `tool_calls` | Number of tool calls. |
-| `tool_errors` | Of these, how many failed. |
-| `tools_used` | Tools used, alphabetical and `;`-separated. |
-| `error_events` | Number of error events in the stream. |
-| `error_message` | First error message (max. 300 characters), otherwise the last stderr line. |
-| `output_chars` | Length of the text response in characters. |
-| `event_count` | Number of valid JSON events. |
-| `stderr_lines` | Number of lines on stderr. |
-
-### Changes in the working directory
-
-These columns stay empty if the directory is not a git repository.
-
-| Column | Description |
-|---|---|
-| `git_files_changed` | Changed, new or deleted files according to `git status --porcelain`. |
-| `git_lines_added`, `git_lines_deleted` | Line changes in tracked files compared to `HEAD`. |
-| `git_untracked_lines` | Lines in new, untracked files. |
-
-### Prompt and environment
-
-| Column | Description |
-|---|---|
-| `prompt_sha256` | Hash of the prompt. Identical prompts can be matched reliably. |
-| `prompt_chars` | Length of the prompt in characters. |
-| `prompt_preview` | The first 80 characters, on one line. |
-| `workdir` | Working directory of the run. |
-| `opencode_version` | OpenCode version. |
-| `host`, `os` | Host name and operating system. |
-| `run_log_dir` | Path to the raw data of this run. |
-
-## How tokens and cost are collected
-
-With `--format json`, OpenCode writes an NDJSON event stream, i.e. one JSON object per line. Tokens and cost appear in the `step_finish` events **per step**; the script sums them over all steps.
-
-In some OpenCode versions the process can end before the last `step_finish` event is emitted. The session data is nevertheless stored completely. After every run the script therefore also reads `opencode export <sessionID>` and adopts those values if they contain at least as many steps as the stream. The column `accounting_source` shows the result:
-
-- `export` – values from the session export (preferred, complete)
-- `stream` – values from the event stream (export unavailable or disabled)
-- `none` – no accounting data found, e.g. after an immediate abort
-
-The export only reads OpenCode's local session data. It can be disabled with `--no-export`.
-
-**Note on `cost_usd`:** The value is OpenCode's own calculation based on model prices. For subscriptions, local models (e.g. via Ollama) or providers without pricing it can be `0` although tokens were consumed.
-
-## Analysis with pandas
+Example analysis:
 
 ```python
 import pandas as pd
 
-df = pd.read_csv("comparison.csv")          # with -d ';' also pass sep=";"
-
-# Only successful runs with complete accounting data
-ok = df[(df.status == "ok") & (df.accounting_source != "none")]
-
-# Metrics per experimental condition
-print(
-    ok.groupby("label")[["cost_usd", "duration_s", "tokens_total", "tool_calls"]]
-      .agg(["mean", "median", "std", "count"])
-      .round(3)
-)
-
-# Success rate per condition
-print(df.groupby("label").status.value_counts(normalize=True).unstack())
+df = pd.read_csv("results/runs.csv")
+print(df.groupby(["prompt", "label"])[["tokens_total", "duration_s", "tool_calls", "lines_added"]]
+        .agg(["mean", "std"]).round(1))
+print(df.groupby(["prompt", "label"]).status.value_counts().unstack(fill_value=0))
 ```
 
-## Notes and limitations
+## Evaluation against the ground truth
 
-- **Independent repetitions:** Without `--fresh-copy` all runs work in the same directory. Changes from earlier runs then influence later ones, and the git metrics are cumulative. For comparable measurements, `--fresh-copy` should be set.
-- **Log directory inside the working directory:** If the log directory or CSV lies inside `--workdir`, they are excluded when copying. This way the agent never sees earlier results.
-- **Permission prompts:** Depending on the OpenCode version and configuration, a non-interactive run can get stuck on permission prompts. Suitable `permission` settings in the OpenCode configuration or version-dependent flags after `--` help.
-- **Copy size:** `--fresh-copy` copies the entire directory including `.git` and e.g. `node_modules`. For large repositories this costs time and disk space.
-- **Format changes:** The evaluation tolerates missing fields and non-JSON lines. If OpenCode fundamentally changes the event types, individual columns will stay empty. The raw data in `events.jsonl` is always kept.
+The quantitative metrics describe the effort of the agent, not the quality of its result. For the quality, compare `response.txt` (review) or `changes.patch` (new migration) with `study/ground-truth/violations.md`. It lists every built-in violation of the schema by rule and by table, and how the three guidelines relate to each other.
 
-## Troubleshooting
+## Notes
 
-| Symptom | Cause and solution |
-|---|---|
-| `opencode not found in PATH` | Install OpenCode or extend the `PATH`. |
-| `expected one argument` for `-p` | The prompt starts with `-`. Use `--prompt="…"` instead. |
-| `accounting_source = none`, `status = error` | Check the run's `stderr.log`. Common causes are a missing API key, an invalid model. |
-| Runs hang until the timeout | OpenCode is probably waiting for a permission approval (see [Notes](#notes-and-limitations)). |
-| Warning about a differing header | The existing CSV uses a different delimiter or comes from an older version. Use the same `-d` as when it was created, or choose a new file. |
-| Excel shows everything in one column | Write with `-d ';'` or import in Excel via *Data → From Text/CSV*. |
+- **Local models vary.** Use several runs per combination and look at the spread (`std`), not only at the mean.
+- **Permission prompts.** A non-interactive run can hang if OpenCode asks for permission; the time limit ends such runs with the status `timeout`.
+- **MCP condition.** The indexing of the guidelines (`study/index-knowledge.sh`) needs the running stack and the embedding model. If the MCP server does not respond, check `http://localhost:6280`.
+- **Reproducibility.** The tool stores the exact command, the prompt hash and the versions with every run.
 
 ## License
 
