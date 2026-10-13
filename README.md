@@ -124,8 +124,10 @@ results/
 | Identification | `batch_id`, `run_index`, `label` (condition), `prompt`, `model_requested`, `model_effective`, `session_id`, `prompt_sha256`, `opencode_version`, `run_dir` |
 | Time and status | `start_utc`, `end_utc`, `duration_s`, `status` (`ok`, `error`, `timeout`), `exit_code`, `error_message` |
 | Tokens and cost | `steps`, `tokens_total`, `tokens_input`, `tokens_output`, `tokens_reasoning`, `tokens_cache_read`, `tokens_cache_write`, `cost_usd`, `accounting_source` |
-| Behavior | `tool_calls`, `tool_errors`, `tools_used` (`;`-separated, MCP tools show up with their name), `output_chars` |
+| Behavior | `tool_calls`, `tool_errors`, `mcp_calls`, `tools_used` (`;`-separated), `output_chars` |
 | Changes | `files_changed`, `lines_added`, `lines_deleted` |
+
+In OpenCode 2 an agent calls MCP tools from code with the tool `execute` (`tools.<server>.<tool>(…)`). `mcp_calls` counts these references in the code of all `execute` calls, and `tools_used` lists them as `<server>.<tool>` (e.g. `docs.search_docs`). A call in a loop is counted once, so the value tells whether and how the MCP server was used, not how often it was queried.
 
 Tokens and cost are taken from the stored session (`opencode session export`, `accounting_source = export`); if the export is not available, the event stream is used (`stream`). Only the model calls of the agent are counted, not the generation of the session title. `cost_usd` is the price that OpenCode calculates from the token counts; it is not what a subscription such as GitHub Copilot bills (see Notes). With local models it is `0`.
 

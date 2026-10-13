@@ -22,6 +22,7 @@ import csv
 import hashlib
 import json
 import os
+import re
 import shlex
 import shutil
 import signal
@@ -33,7 +34,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, NoReturn, Optional, Sequence
 
-__version__ = "4.0.0"
+__version__ = "4.1.0"
 
 # Columns of the result file. Changing them breaks existing result files, so a new study
 # should start with a new output directory.
@@ -42,7 +43,7 @@ CSV_COLUMNS = (
     "start_utc", "end_utc", "duration_s", "status", "exit_code", "error_message",
     "steps", "tokens_total", "tokens_input", "tokens_output", "tokens_reasoning",
     "tokens_cache_read", "tokens_cache_write", "cost_usd", "accounting_source",
-    "tool_calls", "tool_errors", "tools_used", "output_chars",
+    "tool_calls", "tool_errors", "mcp_calls", "tools_used", "output_chars",
     "files_changed", "lines_added", "lines_deleted",
     "session_id", "prompt_sha256", "opencode_version", "run_dir",
 )
@@ -56,6 +57,7 @@ DEFAULT_TIMEOUT_SEC = 1800  # protects against runs that hang, e.g. on a permiss
 KILL_GRACE_SEC = 10         # wait between SIGTERM and SIGKILL
 HELPER_TIMEOUT_SEC = 120    # version query, export, git
 ERROR_MESSAGE_CHARS = 300
+MCP_CALL = re.compile(r"\btools\.(\w+)\.(\w+)")
 
 
 # --------------------------------------------------------------------------- helpers
@@ -157,6 +159,7 @@ class StreamStats:
     usage: Usage = field(default_factory=Usage)
     tool_calls: int = 0
     tool_errors: int = 0
+    mcp_calls: int = 0
     tools_used: set[str] = field(default_factory=set)
     error_events: int = 0
     error_message: str = ""
@@ -196,8 +199,13 @@ def parse_events(path: Path) -> StreamStats:
             st.tool_calls += 1
             if isinstance(part.get("tool"), str):
                 st.tools_used.add(part["tool"])
-            if as_dict(part.get("state")).get("status") == "error":
+            state = as_dict(part.get("state"))
+            if state.get("status") == "error":
                 st.tool_errors += 1
+            if part.get("tool") == "execute":  # OpenCode 2 calls MCP tools from code: tools.<server>.<tool>(...)
+                for server, name in MCP_CALL.findall(str(as_dict(state.get("input")).get("code") or "")):
+                    st.mcp_calls += 1
+                    st.tools_used.add(f"{server}.{name}")
         elif kind == "error":
             st.error_events += 1
             st.error_message = st.error_message or error_text(ev.get("error"))
@@ -408,7 +416,7 @@ def execute_run(i: int, args: argparse.Namespace, batch: Batch) -> dict[str, Any
         "tokens_output": usage.tokens_output, "tokens_reasoning": usage.tokens_reasoning,
         "tokens_cache_read": usage.tokens_cache_read, "tokens_cache_write": usage.tokens_cache_write,
         "cost_usd": f"{usage.cost_usd:.6f}", "accounting_source": source,
-        "tool_calls": st.tool_calls, "tool_errors": st.tool_errors,
+        "tool_calls": st.tool_calls, "tool_errors": st.tool_errors, "mcp_calls": st.mcp_calls,
         "tools_used": ";".join(sorted(st.tools_used)), "output_chars": len(answer),
         "files_changed": changes[0], "lines_added": changes[1], "lines_deleted": changes[2],
         "session_id": st.session_id, "prompt_sha256": batch.prompt_sha256,
