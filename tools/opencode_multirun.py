@@ -34,7 +34,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, NoReturn, Optional, Sequence
 
-__version__ = "4.1.0"
+__version__ = "4.2.0"
 
 # Columns of the result file. Changing them breaks existing result files, so a new study
 # should start with a new output directory.
@@ -44,6 +44,7 @@ CSV_COLUMNS = (
     "steps", "tokens_total", "tokens_input", "tokens_output", "tokens_reasoning",
     "tokens_cache_read", "tokens_cache_write", "cost_usd", "accounting_source",
     "tool_calls", "tool_errors", "mcp_calls", "tools_used", "output_chars",
+    "sql_files_read", "guideline_files_read", "knowledge_accessed",
     "files_changed", "lines_added", "lines_deleted",
     "session_id", "prompt_sha256", "opencode_version", "run_dir",
 )
@@ -58,6 +59,7 @@ KILL_GRACE_SEC = 10         # wait between SIGTERM and SIGKILL
 HELPER_TIMEOUT_SEC = 120    # version query, export, git
 ERROR_MESSAGE_CHARS = 300
 MCP_CALL = re.compile(r"\btools\.(\w+)\.(\w+)")
+GUIDELINE_FILE = re.compile(r"(?:\./)?guidelines/.+\.md$")
 
 
 # --------------------------------------------------------------------------- helpers
@@ -161,6 +163,7 @@ class StreamStats:
     tool_errors: int = 0
     mcp_calls: int = 0
     tools_used: set[str] = field(default_factory=set)
+    files_read: set[str] = field(default_factory=set)
     error_events: int = 0
     error_message: str = ""
     texts: list[str] = field(default_factory=list)
@@ -202,6 +205,10 @@ def parse_events(path: Path) -> StreamStats:
             state = as_dict(part.get("state"))
             if state.get("status") == "error":
                 st.tool_errors += 1
+            if part.get("tool") == "read":
+                path = as_dict(state.get("input")).get("path")
+                if isinstance(path, str) and Path(path).suffix:  # a directory listing is not a read file
+                    st.files_read.add(path)
             if part.get("tool") == "execute":  # OpenCode 2 calls MCP tools from code: tools.<server>.<tool>(...)
                 for server, name in MCP_CALL.findall(str(as_dict(state.get("input")).get("code") or "")):
                     st.mcp_calls += 1
@@ -398,6 +405,7 @@ def execute_run(i: int, args: argparse.Namespace, batch: Batch) -> dict[str, Any
     (run_dir / "response.txt").write_text(answer, encoding="utf-8")
     changes = collect_changes(workspace, run_dir / "changes.patch") if has_baseline else ("", "", "")
 
+    guideline_files = sum(bool(GUIDELINE_FILE.match(p)) for p in st.files_read)
     status = (STATUS_TIMEOUT if timed_out
               else STATUS_ERROR if exit_code != 0 or st.error_events else STATUS_OK)
     message = st.error_message
@@ -418,6 +426,8 @@ def execute_run(i: int, args: argparse.Namespace, batch: Batch) -> dict[str, Any
         "cost_usd": f"{usage.cost_usd:.6f}", "accounting_source": source,
         "tool_calls": st.tool_calls, "tool_errors": st.tool_errors, "mcp_calls": st.mcp_calls,
         "tools_used": ";".join(sorted(st.tools_used)), "output_chars": len(answer),
+        "sql_files_read": sum(p.endswith(".sql") for p in st.files_read),
+        "guideline_files_read": guideline_files, "knowledge_accessed": int(guideline_files > 0 or st.mcp_calls > 0),
         "files_changed": changes[0], "lines_added": changes[1], "lines_deleted": changes[2],
         "session_id": st.session_id, "prompt_sha256": batch.prompt_sha256,
         "opencode_version": batch.opencode_version, "run_dir": str(run_dir),
