@@ -1,6 +1,14 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "model": "ollama/qwen2.5-coder:7b",
+  "model": "github-copilot/claude-sonnet-5",
+  "autoupdate": false,
+  "share": "disabled",
+  "permission": {
+    "webfetch": "deny",
+    "websearch": "deny",
+    "question": "deny",
+    "external_directory": "deny"
+  },
   "provider": {
     "ollama": {
       "npm": "@ai-sdk/openai-compatible",
@@ -9,8 +17,11 @@
         "baseURL": "http://localhost:11434/v1"
       },
       "models": {
-        "qwen2.5-coder:7b": {
-          "name": "Qwen2.5 Coder 7B"
+        "qwen3.5:9b": {
+          "name": "Qwen 3.5 9B"
+        },
+        "gemma4:26b": {
+          "name": "Gemma 4 26B"
         }
       }
     }

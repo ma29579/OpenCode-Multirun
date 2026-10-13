@@ -8,4 +8,4 @@ cd "$(dirname "$0")/.."
 docker compose stop docs-mcp
 docker compose run --rm --no-deps docs-mcp scrape guidelines file:///docs
 docker compose up -d docs-mcp
-echo "Indexed ./sample_guidelines as library 'guidelines'. Check it at http://localhost:6280"
+echo "Indexed ./sample_guidelines as library 'guidelines'. Check it at http://localhost:6281"

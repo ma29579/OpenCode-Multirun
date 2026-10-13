@@ -2,16 +2,17 @@
 """OpenCode-Multirun: run one prompt several times with OpenCode and measure each run.
 
 Every run works on its own copy of the working directory, so the runs are independent and
-the original is never changed. For each run the script records quantitative metrics
+the original is never changed. OpenCode runs with an empty configuration directory, so that
+the personal configuration of the user does not influence the study. For each run the script records quantitative metrics
 (tokens, cost, duration, tool calls, size of the changes) in a CSV file and keeps the raw
 data (event stream, answer text, patch of the changes) for later analysis.
 
 Example:
   tools/opencode_multirun.py -f study/prompts/review-schema.md -n 5 \\
-      -m ollama/qwen2.5-coder:7b -w sample_project --label base \\
+      -m github-copilot/claude-sonnet-5 -w sample_project --label base \\
       --add sample_guidelines/database-guidelines.md:guidelines/
 
-Requirements: Python >= 3.9 (standard library only), opencode, git. Linux, macOS or WSL2.
+Requirements: Python >= 3.9 (standard library only), opencode 2.x, git. Linux, macOS or WSL2.
 """
 
 from __future__ import annotations
@@ -30,9 +31,9 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterator, NoReturn, Optional, Sequence
+from typing import Any, NoReturn, Optional, Sequence
 
-__version__ = "3.0.0"
+__version__ = "4.0.0"
 
 # Columns of the result file. Changing them breaks existing result files, so a new study
 # should start with a new output directory.
@@ -90,21 +91,25 @@ def as_dict(value: Any) -> dict:
     return value if isinstance(value, dict) else {}
 
 
-def walk_dicts(obj: Any) -> Iterator[dict]:
-    """All dictionaries of a nested JSON structure, independent of its exact layout."""
-    if isinstance(obj, dict):
-        yield obj
-        for v in obj.values():
-            yield from walk_dicts(v)
-    elif isinstance(obj, list):
-        for v in obj:
-            yield from walk_dicts(v)
+def env_for(cwd: Path, config_home: Optional[Path] = None) -> dict[str, str]:
+    """Environment for a process that runs in `cwd`.
+    - OpenCode takes its project directory from PWD and not from the real working directory,
+      so PWD must be set as well. Otherwise it would work in the directory this script started in.
+    - config_home replaces ~/.config, so that the personal OpenCode configuration (MCP servers,
+      plugins, rules) of the user does not leak into the study. Settings that other tools
+      pass through OPENCODE_* variables are removed for the same reason."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith("OPENCODE_")}
+    env["PWD"] = str(cwd)
+    if config_home is not None:
+        env["XDG_CONFIG_HOME"] = str(config_home)
+    return env
 
 
-def run_quiet(cmd: Sequence[str], cwd: Optional[Path] = None) -> Optional[subprocess.CompletedProcess]:
+def run_quiet(cmd: Sequence[str], cwd: Optional[Path] = None,
+              env: Optional[dict[str, str]] = None) -> Optional[subprocess.CompletedProcess]:
     """Run a helper command without a terminal; None if it cannot be run."""
     try:
-        return subprocess.run(list(cmd), cwd=cwd, capture_output=True, text=True,
+        return subprocess.run(list(cmd), cwd=cwd, env=env, capture_output=True, text=True,
                               stdin=subprocess.DEVNULL, timeout=HELPER_TIMEOUT_SEC)
     except (OSError, subprocess.SubprocessError):
         return None
@@ -202,26 +207,32 @@ def parse_events(path: Path) -> StreamStats:
     return st
 
 
-def read_export(session_id: str, cwd: Path, target: Path) -> tuple[Optional[Usage], str]:
-    """Cross-check with "opencode export <session>": the last step-finish event is missing
-    from the stream in some OpenCode versions, the stored session is complete.
-    Returns (usage or None, model actually used)."""
-    res = run_quiet(["opencode", "export", session_id], cwd=cwd)
-    if res is None:
+def read_export(session_id: str, cwd: Path, target: Path,
+                env: dict[str, str]) -> tuple[Optional[Usage], str]:
+    """Read the stored session with "opencode session export": it lists every model call of the
+    agent with its tokens and cost. The output is written straight to a file, because through a
+    pipe it can be cut off. Returns (usage or None, model actually used)."""
+    try:
+        with target.open("wb") as f:
+            subprocess.run(["opencode", "session", "export", "--standalone", session_id], cwd=cwd, env=env,
+                           stdout=f, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
+                           timeout=HELPER_TIMEOUT_SEC)
+        lines = target.read_text(encoding="utf-8", errors="replace").splitlines()
+    except (OSError, subprocess.SubprocessError):
         return None, ""
-    lines = res.stdout.splitlines()
     start = next((i for i, ln in enumerate(lines) if ln.lstrip().startswith("{")), None)
-    if start is None:  # some versions print a text line before the JSON
+    if start is None:  # there may be a text line before the JSON
         return None, ""
     raw = "\n".join(lines[start:])
     target.write_text(raw, encoding="utf-8")
     try:
-        dicts = list(walk_dicts(json.loads(raw)))
+        messages = as_dict(json.loads(raw)).get("messages")
     except json.JSONDecodeError:
         return None, ""
-    usage = Usage.from_parts([d for d in dicts if d.get("type") == "step-finish"])
-    model = next((f"{d['providerID']}/{d['modelID']}" for d in dicts
-                  if isinstance(d.get("providerID"), str) and isinstance(d.get("modelID"), str)), "")
+    steps = [m for m in messages if isinstance(m, dict) and m.get("type") == "assistant"] if isinstance(messages, list) else []
+    usage = Usage.from_parts([{"tokens": m.get("tokens"), "cost": m.get("cost")} for m in steps])
+    model = next((f"{as_dict(m.get('model')).get('providerID')}/{as_dict(m.get('model')).get('id')}"
+                  for m in steps if as_dict(m.get("model")).get("id")), "")
     return usage, model
 
 
@@ -257,7 +268,7 @@ def create_workspace(workdir: Path, target: Path, adds: Sequence[tuple[Path, str
 
 def git(workspace: Path, *args: str) -> Optional[subprocess.CompletedProcess]:
     return run_quiet(["git", "-c", "user.name=multirun", "-c", "user.email=multirun@localhost",
-                      "-c", "commit.gpgsign=false", *args], cwd=workspace)
+                      "-c", "commit.gpgsign=false", *args], cwd=workspace, env=env_for(workspace))
 
 
 def commit_baseline(workspace: Path) -> bool:
@@ -306,14 +317,14 @@ def terminate_group(proc: subprocess.Popen) -> None:
             continue
 
 
-def run_process(cmd: Sequence[str], cwd: Path, stdout_path: Path, stderr_path: Path,
-                timeout: int) -> tuple[int, bool]:
+def run_process(cmd: Sequence[str], cwd: Path, env: dict[str, str], stdout_path: Path,
+                stderr_path: Path, timeout: int) -> tuple[int, bool]:
     """Run the command and wait. stdin is /dev/null so that OpenCode never waits for input.
     The command gets its own process group so that a timeout or Ctrl+C stops the whole tree.
     Returns (exit code, timed out)."""
     with stdout_path.open("wb") as out, stderr_path.open("wb") as err:
         try:
-            proc = subprocess.Popen(list(cmd), cwd=cwd, stdin=subprocess.DEVNULL,
+            proc = subprocess.Popen(list(cmd), cwd=cwd, env=env, stdin=subprocess.DEVNULL,
                                     stdout=out, stderr=err, start_new_session=True)
         except OSError as e:
             err.write(f"Could not start process: {e}\n".encode())
@@ -356,8 +367,12 @@ def execute_run(i: int, args: argparse.Namespace, batch: Batch) -> dict[str, Any
     (run_dir / "command.txt").write_text(shlex.join(batch.cmd) + "\n", encoding="utf-8")
     log(f"Run {i}/{args.runs} started …")
 
+    # An empty configuration directory outside of the workspace: OpenCode only sees what the study provides.
+    config_home = run_dir / "opencode-config"
+    config_home.mkdir()
+    env = env_for(workspace, config_home)
     start_iso, t0 = now_iso(), time.perf_counter()
-    exit_code, timed_out = run_process(batch.cmd, workspace, run_dir / "events.jsonl",
+    exit_code, timed_out = run_process(batch.cmd, workspace, env, run_dir / "events.jsonl",
                                        run_dir / "stderr.log", args.timeout)
     duration = time.perf_counter() - t0
     end_iso = now_iso()
@@ -365,7 +380,7 @@ def execute_run(i: int, args: argparse.Namespace, batch: Batch) -> dict[str, Any
     st = parse_events(run_dir / "events.jsonl")
     usage, source, model_effective = st.usage, SOURCE_STREAM, ""
     if st.session_id:
-        exported, model_effective = read_export(st.session_id, workspace, run_dir / "export.json")
+        exported, model_effective = read_export(st.session_id, workspace, run_dir / "export.json", env)
         if exported and exported.steps >= max(1, usage.steps):
             usage, source = exported, SOURCE_EXPORT
     if usage.steps == 0:
@@ -425,7 +440,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     p.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     p.add_argument("-f", "--prompt-file", type=Path, required=True, help="file with the prompt")
     p.add_argument("-n", "--runs", type=int, default=1, help="number of runs (default: 1)")
-    p.add_argument("-m", "--model", default="", help="model, e.g. ollama/qwen2.5-coder:7b")
+    p.add_argument("-m", "--model", default="", help="model, e.g. github-copilot/claude-sonnet-5")
     p.add_argument("-w", "--workdir", type=Path, default=Path.cwd(),
                    help="directory that is copied for every run (default: current directory)")
     p.add_argument("--add", action="append", default=[], metavar="SRC[:DEST]",
@@ -459,7 +474,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         fail("The prompt is empty.")
 
     # A fixed prefix + "--" before the prompt keeps a prompt that starts with "-" from being read as an option.
-    cmd = ["opencode", "run", "--format", "json"] + (["--model", args.model] if args.model else []) + ["--", prompt]
+    # --standalone: a private server per run (the shared background service would ignore the
+    # isolated environment); --auto: approve permissions that the configuration does not deny.
+    cmd = (["opencode", "run", "--standalone", "--auto", "--format", "json"]
+           + (["--model", args.model] if args.model else []) + ["--", prompt])
     version = run_quiet(["opencode", "--version"])
     out = args.out.resolve()
     batch_id = f"{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{os.getpid()}"

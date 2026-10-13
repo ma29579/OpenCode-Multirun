@@ -18,7 +18,7 @@ cd "$(dirname "$0")/.."
 condition=${1:?usage: study/run.sh <condition> <prompt> [runs]}
 prompt=${2:?usage: study/run.sh <condition> <prompt> [runs]}
 runs=${3:-5}
-model=${MODEL:-ollama/qwen2.5-coder:7b}
+model=${MODEL:-github-copilot/claude-sonnet-5}
 
 config=study/config
 guidelines=sample_guidelines

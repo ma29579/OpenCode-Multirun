@@ -2,7 +2,7 @@
 
 Pilot study for a master's thesis: **How does a coding agent handle a prompt and the knowledge that is provided to it?**
 
-The agent ([OpenCode](https://opencode.ai) with a local model) gets a task on a small database project. The task stays the same, the knowledge changes: no guidelines, one guideline, an extended set, a conflicting set, and the same guidelines through an MCP server instead of files. Every combination is run several times. A small script runs the agent and records quantitative metrics; the results of the agent are compared with a known ground truth afterwards.
+The agent ([OpenCode](https://opencode.ai) with a language model) gets a task on a small database project. The task stays the same, the knowledge changes: no guidelines, one guideline, an extended set, a conflicting set, and the same guidelines through an MCP server instead of files. Every combination is run several times. A small script runs the agent and records quantitative metrics; the results of the agent are compared with a known ground truth afterwards.
 
 ## Study design
 
@@ -12,7 +12,7 @@ The agent ([OpenCode](https://opencode.ai) with a local model) gets a task on a 
 | **Knowledge** (condition) | `none`, `base`, `standards`, `all` (conflicting rules), `mcp` (all guidelines through an MCP server) |
 | **Object** | a PostgreSQL schema (`sample_project/`) that deliberately violates the guidelines |
 | **Repetitions** | several runs per combination, because the output of an agent varies |
-| **Model** | a local model served by Ollama |
+| **Model** | one model for all conditions, default `github-copilot/claude-sonnet-5` |
 
 | Condition | The agent gets |
 |---|---|
@@ -36,23 +36,38 @@ What the guidelines contain and how they relate to each other is deliberately **
 | `study/ground-truth/violations.md` | every built-in violation and the conflicts between the guidelines |
 | `sample_project/` | the database project the agent works on |
 | `sample_guidelines/` | the guidelines (knowledge) |
-| `docker-compose.yml` | Ollama with two models and the docs MCP server |
+| `study/setup-ollama.sh` | pulls the embedding model into the local Ollama (condition `mcp`) |
+| `docker-compose.yml` | the docs MCP server (condition `mcp`) |
 | `results/` | output of the runs (not in git) |
 
 `study/ground-truth/` must never be copied into a workspace or shown to an agent.
 
 ## Setup
 
-Requirements: Docker, [OpenCode](https://opencode.ai), Python ≥ 3.9, git. Linux, macOS or WSL2.
+Requirements:
+
+| Requirement | Used for |
+|---|---|
+| [OpenCode](https://opencode.ai) **2.x** | the agent under test |
+| A model provider that OpenCode supports, e.g. GitHub Copilot | the language model of the agent |
+| Python ≥ 3.9 and git | the measuring tool |
+| [Ollama](https://ollama.com) and Docker | only for the condition `mcp`: Ollama computes the embeddings, Docker runs the docs MCP server |
+
+Linux, macOS or WSL2.
 
 ```bash
-cp .env.example .env              # optional: choose the models
-docker compose up -d              # Ollama (coding and embedding model) and the MCP server
-docker compose logs -f ollama-pull  # the first start downloads the models
-study/index-knowledge.sh          # only needed for the condition "mcp"
+opencode auth login          # sign in to the provider of the model (once)
 ```
 
-The defaults are `qwen2.5-coder:7b` (coding) and `nomic-embed-text` (embeddings). The context window of Ollama is raised to 32k tokens, because tool calls are unreliable with the default.
+For the condition `mcp` additionally:
+
+```bash
+study/setup-ollama.sh        # pulls the embedding model into the local Ollama
+docker compose up -d         # docs MCP server on http://localhost:6281
+study/index-knowledge.sh     # indexes the guidelines into the MCP server
+```
+
+The default model is `github-copilot/claude-sonnet-5`. Use another model with `MODEL=<provider>/<model> study/run.sh …` (list: `opencode models`), e.g. `MODEL=ollama/qwen3.5:9b` for a local model that is configured in `study/config/opencode*.json`. A local model needs Ollama with a context window of at least 32k tokens (`OLLAMA_CONTEXT_LENGTH=32768`), otherwise tool calls fail. Ports and the embedding model can be changed in `.env` (see `.env.example`). The MCP server runs on host port **6281**, because 6280 is often taken by another docs-mcp-server; it reaches Ollama through `host.docker.internal`.
 
 ## Run an experiment
 
@@ -64,7 +79,7 @@ study/run.sh <condition> <prompt> [runs]
 study/run.sh none review-schema 5
 study/run.sh base review-schema 5
 study/run.sh all add-tables 5
-MODEL=ollama/qwen2.5-coder:14b study/run.sh mcp fix-feed-table 3
+MODEL=github-copilot/claude-haiku-5.5 study/run.sh mcp fix-feed-table 3
 ```
 
 Each run works on its **own copy** of `sample_project/`, so runs are independent and the original is never changed. The knowledge of the condition is added to the copy. Everything after the third argument is passed to the tool, e.g. `-t 3600` for a longer time limit.
@@ -72,7 +87,7 @@ Each run works on its **own copy** of `sample_project/`, so runs are independent
 To use the tool directly:
 
 ```bash
-tools/opencode_multirun.py -f study/prompts/review-schema.md -n 5 -m ollama/qwen2.5-coder:7b \
+tools/opencode_multirun.py -f study/prompts/review-schema.md -n 5 -m github-copilot/claude-sonnet-5 \
   -w sample_project --label base \
   --add study/config/opencode.json:opencode.json \
   --add sample_guidelines/database-guidelines.md:guidelines/
@@ -82,7 +97,7 @@ tools/opencode_multirun.py -f study/prompts/review-schema.md -n 5 -m ollama/qwen
 |---|---|
 | `-f`, `--prompt-file` | file with the prompt (required) |
 | `-n`, `--runs` | number of runs (default 1) |
-| `-m`, `--model` | model, e.g. `ollama/qwen2.5-coder:7b` |
+| `-m`, `--model` | model, e.g. `github-copilot/claude-sonnet-5` |
 | `-w`, `--workdir` | directory that is copied for every run (default: current directory) |
 | `--add SRC[:DEST]` | copy a file or directory into every workspace; with a trailing `/` DEST is a directory |
 | `--label` | name of the condition |
@@ -112,7 +127,7 @@ results/
 | Behavior | `tool_calls`, `tool_errors`, `tools_used` (`;`-separated, MCP tools show up with their name), `output_chars` |
 | Changes | `files_changed`, `lines_added`, `lines_deleted` |
 
-Tokens and cost come from the event stream. Because the last event is missing in some OpenCode versions, the tool also reads `opencode export` and uses it if it is more complete (`accounting_source`). With local models `cost_usd` is `0`; tokens are still counted.
+Tokens and cost are taken from the stored session (`opencode session export`, `accounting_source = export`); if the export is not available, the event stream is used (`stream`). Only the model calls of the agent are counted, not the generation of the session title. `cost_usd` is the price that OpenCode calculates from the token counts; it is not what a subscription such as GitHub Copilot bills (see Notes). With local models it is `0`.
 
 Example analysis:
 
@@ -131,9 +146,13 @@ The quantitative metrics describe the effort of the agent, not the quality of it
 
 ## Notes
 
-- **Local models vary.** Use several runs per combination and look at the spread (`std`), not only at the mean.
-- **Permission prompts.** A non-interactive run can hang if OpenCode asks for permission; the time limit ends such runs with the status `timeout`.
-- **MCP condition.** The indexing of the guidelines (`study/index-knowledge.sh`) needs the running stack and the embedding model. If the MCP server does not respond, check `http://localhost:6280`.
+- **Isolated runs.** OpenCode runs in the copy of the project with a private server (`--standalone`) and an empty configuration directory (`XDG_CONFIG_HOME`), so that your personal OpenCode configuration (MCP servers, plugins, rules, agents) does not influence the study. The agent only sees the `opencode.json` and `AGENTS.md` that the condition puts into the workspace. Rule files above the workspace (such as this repository's `AGENTS.md`) are not read, because every workspace is its own git repository. Only your provider credentials are shared.
+- **Fixed environment.** `study/config/opencode*.json` disable automatic updates, sharing of sessions and the web tools (`webfetch`, `websearch`), so that the agent cannot look up knowledge on the internet. The version of OpenCode is stored with every run (`opencode_version`); do not update it during a series.
+- **Permissions.** The runs use `--auto`: the agent may run shell commands and change files without asking, otherwise unattended runs would wait for an answer forever. Only access to directories outside of the workspace is denied by the configuration. The shell is not sandboxed, so do not run the study with a model or a prompt you do not trust on a machine with sensitive data (a container or virtual machine is safer).
+- **Models vary.** The output of an agent differs from run to run. Use several runs per combination and look at the spread (`std`), not only at the mean. Use fixed model names, not aliases like `-latest`.
+- **Subscriptions.** With a subscription such as GitHub Copilot the cost is not paid per token. Check how many premium requests a run uses (a run has several model calls, see `steps`) before you start a large series, and watch the usage limits of the provider.
+- **MCP condition.** The indexing (`study/index-knowledge.sh`) needs Ollama with the embedding model and the running MCP server. If the server does not respond, check `http://localhost:6281`.
+- **Tool calls.** Small models sometimes write a tool call as plain text instead of calling the tool. The run then ends after one step without any tool call (see `response.txt`, `tool_calls = 0`). Such runs count as results of the model; choose a model that supports tools reliably.
 - **Reproducibility.** The tool stores the exact command, the prompt hash and the versions with every run.
 
 ## License

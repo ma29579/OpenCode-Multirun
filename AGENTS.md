@@ -12,7 +12,8 @@ A pilot study for a master's thesis: how does an agent handle a prompt and the k
 | `study/` | prompts, configuration, condition runner, ground truth |
 | `sample_project/` | object of the study: `db/migrations/*.sql`, `db/scripts/*.sql` |
 | `sample_guidelines/` | the knowledge given to the agent under test |
-| `docker-compose.yml`, `.env.example` | Ollama (two models) and the docs MCP server |
+| `docker-compose.yml`, `.env.example` | the docs MCP server (Ollama and OpenCode run on the host) |
+| `study/setup-ollama.sh` | pulls the embedding model into the local Ollama |
 
 ## Keep the study valid
 
@@ -27,6 +28,8 @@ A pilot study for a master's thesis: how does an agent handle a prompt and the k
 - Python ≥ 3.9, **standard library only**, POSIX only (process groups via `os.killpg`).
 - Flow: `parse_args` → `main` → per run `execute_run` (copy workspace, add files, git baseline, run `opencode run --format json`, evaluate stream and export, collect changes, append CSV row).
 - Every run works in its own copy of the working directory. The original must never be changed.
+- OpenCode 2.x is required: `opencode run --standalone --auto --format json`, `opencode session export --standalone`. `--standalone` gives every run a private server; the shared background service of OpenCode would ignore the isolated environment.
+- **Start OpenCode only through `env_for`.** OpenCode takes its project directory from the `PWD` variable, not from the real working directory. Without `PWD` the agent would work in the directory the tool was started from (the repository itself). `env_for` also points `XDG_CONFIG_HOME` to an empty directory so that the personal OpenCode configuration of the user cannot leak into a run, and removes `OPENCODE_*` variables.
 - Failed runs are measurement data: the tool exits with `0`. Exit codes: `0` ok, `1` configuration error, `2` invalid parameters, `130` Ctrl+C.
 - `CSV_COLUMNS` is the contract of the result files. Changing it requires a new `__version__` and a note in `README.md`.
 - Pass commands to `subprocess` as lists, never as shell strings. The prompt follows `--`.
