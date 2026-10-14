@@ -37,6 +37,7 @@ __version__ = "1.0.0"
 
 ROOT = Path(__file__).resolve().parent.parent
 BASELINE = ROOT / "sample_project"        # the unchanged sample project
+NARROW_PROMPTS = {"urgent-fix"}               # tasks that change one spot of an existing table
 GUIDELINES = ROOT / "sample_guidelines"   # the linter must cover the same rules
 CONTAINER = "opencode-multirun-lint"
 IMAGE = "postgres:17-alpine"
@@ -692,12 +693,16 @@ def failing(items: list[Item], sources: tuple[str, ...] = ("DB", "STD")) -> set[
     return {i.key() for i in items if not i.ok and i.rule.split("-")[0] in sources}
 
 
-def score(base: Schema, base_items: list[Item], result: Schema) -> dict[str, Any]:
-    """Compare the schema of a run with the baseline and score the objects that were created or changed."""
+def score(base: Schema, base_items: list[Item], result: Schema, narrow: bool = False) -> dict[str, Any]:
+    """Compare the schema of a run with the baseline and score the objects that were created or changed.
+    With `narrow` only the checks that are new or have a different result than before are scored."""
     base_sig, result_sig = signatures(base), signatures(result)
     touched = {scope for scope, sig in result_sig.items() if base_sig.get(scope) != sig}
     items = run_rules(result)
     scored = [i for i in items if i.scope in touched]
+    if narrow:  # a targeted change: do not hold the agent responsible for what the object already had
+        before = {i.key(): i.ok for i in base_items}
+        scored = [i for i in scored if before.get(i.key()) != i.ok]
     row: dict[str, Any] = {"touched": len(touched)}
     failed_rules: set[str] = set()
     adopted: set[str] = set()
@@ -790,7 +795,7 @@ def main() -> None:
             schema, error = build_schema(pg, f"run{n}", read_sources(workspace))
             row["applied"] = int(schema is not None)
             row["error"] = error
-            result = score(base, base_items, schema) if schema else {"touched": 0}
+            result = score(base, base_items, schema, run["prompt"] in NARROW_PROMPTS) if schema else {"touched": 0}
             items = result.pop("_items", [])
             row.update(result)
             (run_dir / "lint.json").write_text(json.dumps({"error": error, "items": items}, indent=1), encoding="utf-8")

@@ -162,7 +162,7 @@ For every run it applies the migrations of the workspace (`db/migrations/V*.sql`
 | `regressions` | checks that passed before and fail now |
 | `failed_rules` | `DB`/`STD` rules that were violated on the new or changed objects |
 
-`<run_dir>/lint.json` lists every single check. The linter measures only runs that change the schema (all prompts except `review-schema`); the review is evaluated from `response.txt`. Several checks are heuristics, for example which column holds an enumeration or a quantity (names and types); they are validated against the ground truth: on the unchanged sample project the linter finds the violations listed there. Rules about reasoning (for example "natural keys are unique") are checked for the cases that can be decided from the schema. The linter and the guidelines must have the same rule IDs; the linter stops otherwise.
+For `urgent-fix`, which changes one spot of an existing table, only the checks that are new or whose result changed are scored (`NARROW_PROMPTS` in the linter); otherwise the agent would be held responsible for the existing columns of the table. `<run_dir>/lint.json` lists every single check. The linter measures only runs that change the schema (all prompts except `review-schema`); the review is evaluated from `response.txt`. Several checks are heuristics, for example which column holds an enumeration or a quantity (names and types); they are validated against the ground truth: on the unchanged sample project the linter finds the violations listed there. Rules about reasoning (for example "natural keys are unique") are checked for the cases that can be decided from the schema. The linter and the guidelines must have the same rule IDs; the linter stops otherwise.
 
 Example analysis:
 
