@@ -12,7 +12,7 @@ The agent ([OpenCode](https://opencode.ai) with a language model) gets a task on
 | **Knowledge** (scenario) | six ways to provide the same 32 rules, see below |
 | **Object** | a PostgreSQL schema (`sample_project/`) that deliberately violates the rules |
 | **Repetitions** | several runs per combination, because the output of an agent varies |
-| **Model** | one model for all scenarios, default `github-copilot/claude-sonnet-5` |
+| **Models** | two models from different vendors, the same for all scenarios: `github-copilot/claude-sonnet-5` and `github-copilot/gpt-5.5` (list: `opencode models`) |
 
 The 32 rules come from three guideline documents in `sample_guidelines/`: `DB` (12 general rules, mostly known to a model, they serve as controls), `STD` (11 house rules that extend them and that a model cannot know) and `DES` (9 plausible conventions that **contradict** a general rule or a house rule on purpose). The documents do not say how they relate; this is only documented in the ground truth (`study/ground-truth/violations.md`).
 
@@ -69,7 +69,7 @@ docker compose up -d         # MCP servers: all rules on :6281, general guidelin
 study/index-knowledge.sh     # builds the scenarios and indexes the rules into both servers
 ```
 
-The default model is `github-copilot/claude-sonnet-5`. Use another model with `MODEL=<provider>/<model> study/run-all.sh …` (list: `opencode models`). Ports and the embedding model can be changed in `.env` (see `.env.example`); run `study/build-scenarios.py` again afterwards, it writes the ports into the scenarios. The servers reach Ollama through `host.docker.internal`. They are separate, so that the agent of `d-mcp-server` cannot see the specific rules and the agent of `e-mcp-and-specs` cannot see all rules.
+The default models are `github-copilot/claude-sonnet-5` and `github-copilot/gpt-5.5`. Use others with `MODELS="<provider>/<model> …" study/run-all.sh …` (list: `opencode models`); `study/run.sh` takes a single model in `MODEL`. Ports and the embedding model can be changed in `.env` (see `.env.example`); run `study/build-scenarios.py` again afterwards, it writes the ports into the scenarios. The servers reach Ollama through `host.docker.internal`. They are separate, so that the agent of `d-mcp-server` cannot see the specific rules and the agent of `e-mcp-and-specs` cannot see all rules.
 
 ## Run the study
 
@@ -77,11 +77,11 @@ The default model is `github-copilot/claude-sonnet-5`. Use another model with `M
 study/run-all.sh [runs]      # default 3 runs per combination
 ```
 
-This runs 6 scenarios × 5 prompts × `runs` agent runs (90 with the default), writes everything to `results/study-<timestamp>/` and finishes with the linter. Check the quota of your provider first (see Notes). Restrict the study with environment variables:
+This runs 2 models × 6 scenarios × 5 prompts × `runs` agent runs (180 with the default), writes everything to `results/study-<timestamp>/` and finishes with the linter. Check the quota of your provider first (see Notes). Restrict the study with environment variables:
 
 ```bash
 SCENARIOS="baseline b-guideline-files" PROMPTS=add-tables study/run-all.sh 5
-MODEL=github-copilot/claude-haiku-5.5 study/run-all.sh 3
+MODELS=github-copilot/claude-haiku-5.5 study/run-all.sh 3
 ```
 
 One combination:

@@ -4,16 +4,17 @@
 #   study/run-all.sh [runs per combination]
 #
 # Environment:
-#   MODEL     model of the agent (default github-copilot/claude-sonnet-5)
+#   MODELS    models of the agent (default: github-copilot/claude-sonnet-5 github-copilot/gpt-5.5)
 #   SCENARIOS scenarios to run (default: all six)
 #   PROMPTS   prompts to run (default: add-tables add-animals fix-feed-table urgent-fix review-schema)
 #
-# 6 scenarios x 5 prompts x 3 runs = 90 agent runs. Check the quota of your model provider first.
+# 2 models x 6 scenarios x 5 prompts x 3 runs = 180 agent runs. Check the quota of your model provider first.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 runs=${1:-3}
 export OUT=results/study-$(date +%Y%m%d-%H%M%S)   # a new directory for every study
+models=${MODELS:-github-copilot/claude-sonnet-5 github-copilot/gpt-5.5}
 scenarios=${SCENARIOS:-baseline a-agents-md b-guideline-files c-spec-files d-mcp-server e-mcp-and-specs}
 prompts=${PROMPTS:-add-tables add-animals fix-feed-table urgent-fix review-schema}
 
@@ -36,8 +37,10 @@ done
 echo "Output: $OUT"
 for prompt in $prompts; do
   for scenario in $scenarios; do
-    echo "=== $scenario / $prompt ==="
-    study/run.sh "$scenario" "$prompt" "$runs"
+    for model in $models; do
+      echo "=== $model / $scenario / $prompt ==="
+      MODEL=$model study/run.sh "$scenario" "$prompt" "$runs"
+    done
   done
 done
 
