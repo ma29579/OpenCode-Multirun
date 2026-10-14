@@ -2,42 +2,48 @@
 
 Pilot study for a master's thesis: **How does a coding agent handle a prompt and the knowledge that is provided to it?**
 
-The agent ([OpenCode](https://opencode.ai) with a language model) gets a task on a small database project. The task stays the same, the knowledge changes: no guidelines, one guideline, an extended set, a conflicting set, and the same guidelines through an MCP server instead of files. Every combination is run several times. A small script runs the agent and records quantitative metrics; the results of the agent are compared with a known ground truth afterwards.
+The agent ([OpenCode](https://opencode.ai) with a language model) gets a task on a small database project. The task stays the same, the knowledge changes: no knowledge, the rules inside `AGENTS.md`, as plain files, as specs (spec-driven), through an MCP server, and a hybrid of MCP server and specs. Every combination is run several times. A script runs the agent and records quantitative metrics; a linter checks how well the result follows the 50 rules.
 
 ## Study design
 
 | | |
 |---|---|
-| **Task** (prompt) | `review-schema` (find violations), `add-tables` (write new migration), `fix-feed-table` (rework a table) |
-| **Knowledge** (condition) | `none`, `base`, `standards`, `all` (conflicting rules), `mcp` (all guidelines through an MCP server) |
-| **Object** | a PostgreSQL schema (`sample_project/`) that deliberately violates the guidelines |
+| **Task** (prompt) | `add-tables` (write a new migration), `fix-feed-table` (rework a table), `review-schema` (find violations) |
+| **Knowledge** (scenario) | six ways to provide the same 50 rules, see below |
+| **Object** | a PostgreSQL schema (`sample_project/`) that deliberately violates the rules |
 | **Repetitions** | several runs per combination, because the output of an agent varies |
-| **Model** | one model for all conditions, default `github-copilot/claude-sonnet-5` |
+| **Model** | one model for all scenarios, default `github-copilot/claude-sonnet-5` |
 
-| Condition | The agent gets |
+The 50 rules come from three guideline documents in `sample_guidelines/`: `DB` (21 base rules), `STD` (12 rules that extend them) and `DES` (17 conventions that **contradict** the base rules on purpose). The documents do not say how they relate; this is only documented in the ground truth (`study/ground-truth/violations.md`).
+
+| Scenario | The agent gets |
 |---|---|
-| `none` | nothing besides the task |
-| `base` | `database-guidelines.md` as file in the workspace |
-| `standards` | the base guideline plus `database-standards.md` |
-| `all` | all three guideline files, including `database-design-conventions.md` |
-| `mcp` | all three guidelines through the `docs` MCP server (no files) |
+| `baseline` | no knowledge, only the task |
+| `a-agents` | all guidelines inside `AGENTS.md` (in the context of every request) |
+| `b-files` | the three guideline files in `guidelines/`; `AGENTS.md` points to them |
+| `c-specs` | the rules grouped by requirement as specs in `specs/<capability>/spec.md` (spec-driven development); `AGENTS.md` points to them |
+| `d-mcp` | the three guideline files through the `docs` MCP server (no files) |
+| `e-hybrid` | **static** rules (capabilities `naming`, `data-types`; 25 rules) through the MCP server, **dynamic** rules (`integrity`, `modeling`, `database-objects`, `migrations`; 25 rules) as specs in `specs/` |
 
-What the guidelines contain and how they relate to each other is deliberately **not** stated in the guideline files. It is documented in the ground truth (see below).
+In `c-specs` and `e-hybrid` the rules are grouped by topic, not by source document, so contradicting rules stand next to each other. Static rules are conventions that rarely change (how things are written and typed); dynamic rules are requirements for structure and process that depend on the task and live next to the code. The assignment of the rules is in `study/build-scenarios.py`.
 
 ## Repository layout
 
 | Path | Content |
 |---|---|
 | `tools/opencode_multirun.py` | the measuring tool: runs a prompt n times and records metrics |
+| `tools/schema_lint.py` | the linter: checks the schema that an agent produced against the 50 rules |
 | `study/prompts/` | the tasks |
-| `study/config/` | OpenCode configuration and project notes that are copied into the workspace |
-| `study/run.sh` | runs one condition with one prompt |
-| `study/index-knowledge.sh` | indexes the guidelines into the MCP server |
+| `study/build-scenarios.py` | builds the scenarios in `study/scenarios/` from the guidelines |
+| `study/run-all.sh` | runs the whole study: every scenario with every prompt, then the linter |
+| `study/run.sh` | runs one scenario with one prompt |
+| `study/index-knowledge.sh` | indexes the guidelines into the two MCP servers |
+| `study/config/opencode.json` | OpenCode configuration that every scenario starts from |
 | `study/ground-truth/violations.md` | every built-in violation and the conflicts between the guidelines |
 | `sample_project/` | the database project the agent works on |
-| `sample_guidelines/` | the guidelines (knowledge) |
-| `study/setup-ollama.sh` | pulls the embedding model into the local Ollama (condition `mcp`) |
-| `docker-compose.yml` | the docs MCP server (condition `mcp`) |
+| `sample_guidelines/` | the guidelines (the source of all scenarios) |
+| `study/setup-ollama.sh` | pulls the embedding model into the local Ollama (MCP scenarios) |
+| `docker-compose.yml` | the two docs MCP servers (scenarios `d-mcp`, `e-hybrid`) |
 | `results/` | output of the runs (not in git) |
 
 `study/ground-truth/` must never be copied into a workspace or shown to an agent.
@@ -51,56 +57,49 @@ Requirements:
 | [OpenCode](https://opencode.ai) **2.x** | the agent under test |
 | A model provider that OpenCode supports, e.g. GitHub Copilot | the language model of the agent |
 | Python ≥ 3.9 and git | the measuring tool |
-| [Ollama](https://ollama.com) and Docker | only for the condition `mcp`: Ollama computes the embeddings, Docker runs the docs MCP server |
+| Docker | the MCP servers and the linter (a throw-away PostgreSQL) |
+| [Ollama](https://ollama.com) | only for the MCP scenarios: computes the embeddings |
 
 Linux, macOS or WSL2.
 
 ```bash
 opencode auth login          # sign in to the provider of the model (once)
-```
-
-For the condition `mcp` additionally:
-
-```bash
 study/setup-ollama.sh        # pulls the embedding model into the local Ollama
-docker compose up -d         # docs MCP server on http://localhost:6281
-study/index-knowledge.sh     # indexes the guidelines into the MCP server
+docker compose up -d         # MCP servers: all rules on :6281, static rules on :6282
+study/index-knowledge.sh     # builds the scenarios and indexes the rules into both servers
 ```
 
-The default model is `github-copilot/claude-sonnet-5`. Use another model with `MODEL=<provider>/<model> study/run.sh …` (list: `opencode models`), e.g. `MODEL=ollama/qwen3.5:9b` for a local model that is configured in `study/config/opencode*.json`. A local model needs Ollama with a context window of at least 32k tokens (`OLLAMA_CONTEXT_LENGTH=32768`), otherwise tool calls fail. Ports and the embedding model can be changed in `.env` (see `.env.example`). The MCP server runs on host port **6281**, because 6280 is often taken by another docs-mcp-server; it reaches Ollama through `host.docker.internal`.
+The default model is `github-copilot/claude-sonnet-5`. Use another model with `MODEL=<provider>/<model> study/run-all.sh …` (list: `opencode models`). Ports and the embedding model can be changed in `.env` (see `.env.example`); run `study/build-scenarios.py` again afterwards, it writes the ports into the scenarios. The servers reach Ollama through `host.docker.internal`. They are separate, so that the agent of `d-mcp` cannot see the static subset and the agent of `e-hybrid` cannot see all rules.
 
-## Run an experiment
+## Run the study
 
 ```bash
-study/run.sh <condition> <prompt> [runs]
+study/run-all.sh [runs]      # default 3 runs per combination
 ```
+
+This runs 6 scenarios × 3 prompts × `runs` agent runs (54 with the default), writes everything to `results/study-<timestamp>/` and finishes with the linter. Check the quota of your provider first (see Notes). Restrict the study with environment variables:
 
 ```bash
-study/run.sh none review-schema 5
-study/run.sh base review-schema 5
-study/run.sh all add-tables 5
-MODEL=github-copilot/claude-haiku-5.5 study/run.sh mcp fix-feed-table 3
+SCENARIOS="baseline b-files" PROMPTS=add-tables study/run-all.sh 5
+MODEL=github-copilot/claude-haiku-5.5 OUT=results/haiku study/run-all.sh 3
 ```
 
-Each run works on its **own copy** of `sample_project/`, so runs are independent and the original is never changed. The knowledge of the condition is added to the copy. Everything after the third argument is passed to the tool, e.g. `-t 3600` for a longer time limit.
-
-To use the tool directly:
+One combination:
 
 ```bash
-tools/opencode_multirun.py -f study/prompts/review-schema.md -n 5 -m github-copilot/claude-sonnet-5 \
-  -w sample_project --label base \
-  --add study/config/opencode.json:opencode.json \
-  --add sample_guidelines/database-guidelines.md:guidelines/
+study/run.sh <scenario> <prompt> [runs]        # e.g. study/run.sh c-specs add-tables 3
 ```
 
-| Option | Meaning |
+Each run works on its **own copy** of `sample_project/`, so runs are independent and the original is never changed. The files of the scenario are added to the copy. Everything after the third argument is passed to the tool, e.g. `-t 3600` for a longer time limit. To use the tool directly, see `tools/opencode_multirun.py --help`.
+
+| Option of the tool | Meaning |
 |---|---|
 | `-f`, `--prompt-file` | file with the prompt (required) |
 | `-n`, `--runs` | number of runs (default 1) |
 | `-m`, `--model` | model, e.g. `github-copilot/claude-sonnet-5` |
 | `-w`, `--workdir` | directory that is copied for every run (default: current directory) |
 | `--add SRC[:DEST]` | copy a file or directory into every workspace; with a trailing `/` DEST is a directory |
-| `--label` | name of the condition |
+| `--label` | name of the scenario |
 | `-o`, `--out` | output directory (default `results`) |
 | `-t`, `--timeout` | time limit per run in seconds (default 1800) |
 
@@ -121,11 +120,11 @@ results/
 
 | Group | Columns |
 |---|---|
-| Identification | `batch_id`, `run_index`, `label` (condition), `prompt`, `model_requested`, `model_effective`, `session_id`, `prompt_sha256`, `opencode_version`, `run_dir` |
+| Identification | `batch_id`, `run_index`, `label` (scenario), `prompt`, `model_requested`, `model_effective`, `session_id`, `prompt_sha256`, `opencode_version`, `run_dir` |
 | Time and status | `start_utc`, `end_utc`, `duration_s`, `status` (`ok`, `error`, `timeout`), `exit_code`, `error_message` |
 | Tokens and cost | `steps`, `tokens_total`, `tokens_input`, `tokens_output`, `tokens_reasoning`, `tokens_cache_read`, `tokens_cache_write`, `cost_usd`, `accounting_source` |
 | Behavior | `tool_calls`, `tool_errors`, `mcp_calls`, `tools_used` (`;`-separated), `output_chars` |
-| Use of the knowledge | `sql_files_read` (how many SQL files the agent read), `guideline_files_read` (how many guideline files it read), `knowledge_accessed` (`1` if it read a guideline file or called the MCP server, otherwise `0`) |
+| Use of the knowledge | `sql_files_read` (how many SQL files the agent read), `guideline_files_read` (how many files in `guidelines/` or `specs/` it read), `knowledge_accessed` (`1` if it read such a file or called the MCP server, otherwise `0`; always `0` in `a-agents` and `baseline`, because `AGENTS.md` is part of the context of the agent anyway) |
 | Changes | `files_changed`, `lines_added`, `lines_deleted` |
 
 In OpenCode 2 an agent calls MCP tools from code with the tool `execute` (`tools.<server>.<tool>(…)`). `mcp_calls` counts these references in the code of all `execute` calls, and `tools_used` lists them as `<server>.<tool>` (e.g. `docs.search_docs`). A call in a loop is counted once, so the value tells whether and how the MCP server was used, not how often it was queried. `knowledge_accessed` shows whether the agent used the provided knowledge at all; the content it got and applied has to be evaluated from `response.txt`. `sql_files_read` shows how much of the schema the agent looked at (the sample project has 8 SQL files).
@@ -143,18 +142,46 @@ print(df.groupby(["prompt", "label"])[["tokens_total", "duration_s", "tool_calls
 print(df.groupby(["prompt", "label"]).status.value_counts().unstack(fill_value=0))
 ```
 
-## Evaluation against the ground truth
+## Linter: the quality of the result
 
-The quantitative metrics describe the effort of the agent, not the quality of its result. For the quality, compare `response.txt` (review) or `changes.patch` (new migration) with `study/ground-truth/violations.md`. It lists every built-in violation of the schema by rule and by table, and how the three guidelines relate to each other.
+The metrics of `runs.csv` describe the effort of the agent, not the quality of its result. The linter turns the quality into numbers:
+
+```bash
+python3 tools/schema_lint.py results/study-<timestamp>      # run-all.sh does this at the end
+```
+
+For every run it applies the migrations of the workspace (`db/migrations/V*.sql`, in version order) to a fresh PostgreSQL in a Docker container, reads the schema from the catalog and checks all 50 rules. Only the tables, views and files that the agent **created or changed** are scored; the violations that the sample project already has do not count against the agent. A rule is *satisfied* if all its checks on these objects pass, and *applicable* if the agent created at least one object it applies to.
+
+| Column of `lint.csv` | Meaning |
+|---|---|
+| `applied` | `1` if all migrations apply without error (`error` holds the message) |
+| `touched` | number of tables, views and files that the agent created or changed |
+| `db_rate`, `std_rate` | satisfied rules / applicable rules of the base guideline and the standards |
+| `des_rate` | adopted conflicting conventions / applicable ones; a high value means that the agent followed the contradicting guideline (`adopted_des` lists them) |
+| `*_applicable`, `*_satisfied`, `*_checks`, `*_passed` | the counts behind the rates; a *check* is one column, constraint or table |
+| `violations_baseline`, `violations_result` | violations of `DB` and `STD` in the whole schema before and after the run |
+| `regressions` | checks that passed before and fail now |
+| `failed_rules` | `DB`/`STD` rules that were violated on the new or changed objects |
+
+`<run_dir>/lint.json` lists every single check. The linter measures only runs that change the schema (`add-tables`, `fix-feed-table`); the review is evaluated from `response.txt`. Several checks are heuristics, for example which column holds an enumeration or a quantity (names and types); they are validated against the ground truth: on the unchanged sample project the linter finds the violations listed there. Rules about reasoning (for example "natural keys are unique") are checked for the cases that can be decided from the schema. The linter and the guidelines must have the same rule IDs; the linter stops otherwise.
+
+Example analysis:
+
+```python
+import pandas as pd
+
+lint = pd.read_csv("results/study-.../lint.csv")
+print(lint.groupby(["prompt", "label"])[["db_rate", "std_rate", "des_rate"]].mean().round(2))
+```
 
 ## Notes
 
-- **Isolated runs.** OpenCode runs in the copy of the project with a private server (`--standalone`) and an empty configuration directory (`XDG_CONFIG_HOME`), so that your personal OpenCode configuration (MCP servers, plugins, rules, agents) does not influence the study. The agent only sees the `opencode.json` and `AGENTS.md` that the condition puts into the workspace. Rule files above the workspace (such as this repository's `AGENTS.md`) are not read, because every workspace is its own git repository. Only your provider credentials are shared.
+- **Isolated runs.** OpenCode runs in the copy of the project with a private server (`--standalone`) and an empty configuration directory (`XDG_CONFIG_HOME`), so that your personal OpenCode configuration (MCP servers, plugins, rules, agents) does not influence the study. The agent only sees the `opencode.json` and `AGENTS.md` that the scenario puts into the workspace. Rule files above the workspace (such as this repository's `AGENTS.md`) are not read, because every workspace is its own git repository. Only your provider credentials are shared.
 - **Fixed environment.** `study/config/opencode*.json` disable automatic updates, sharing of sessions and the web tools (`webfetch`, `websearch`), so that the agent cannot look up knowledge on the internet. The version of OpenCode is stored with every run (`opencode_version`); do not update it during a series.
 - **Permissions.** The runs use `--auto`: the agent may run shell commands and change files without asking, otherwise unattended runs would wait for an answer forever. Only access to directories outside of the workspace is denied by the configuration. The shell is not sandboxed, so do not run the study with a model or a prompt you do not trust on a machine with sensitive data (a container or virtual machine is safer).
 - **Models vary.** The output of an agent differs from run to run. Use several runs per combination and look at the spread (`std`), not only at the mean. Use fixed model names, not aliases like `-latest`.
 - **Subscriptions.** With a subscription such as GitHub Copilot the cost is not paid per token. Check how many premium requests a run uses (a run has several model calls, see `steps`) before you start a large series, and watch the usage limits of the provider.
-- **MCP condition.** The indexing (`study/index-knowledge.sh`) needs Ollama with the embedding model and the running MCP server. If the server does not respond, check `http://localhost:6281`.
+- **MCP scenarios.** The indexing (`study/index-knowledge.sh`) needs Ollama with the embedding model and the running MCP servers. If a server does not respond, check `http://localhost:6281` (all rules) and `http://localhost:6282` (static rules).
 - **Tool calls.** Small models sometimes write a tool call as plain text instead of calling the tool. The run then ends after one step without any tool call (see `response.txt`, `tool_calls = 0`). Such runs count as results of the model; choose a model that supports tools reliably.
 - **Reproducibility.** The tool stores the exact command, the prompt hash and the versions with every run.
 

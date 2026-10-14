@@ -34,7 +34,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, NoReturn, Optional, Sequence
 
-__version__ = "4.2.0"
+__version__ = "4.3.0"
 
 # Columns of the result file. Changing them breaks existing result files, so a new study
 # should start with a new output directory.
@@ -59,7 +59,7 @@ KILL_GRACE_SEC = 10         # wait between SIGTERM and SIGKILL
 HELPER_TIMEOUT_SEC = 120    # version query, export, git
 ERROR_MESSAGE_CHARS = 300
 MCP_CALL = re.compile(r"\btools\.(\w+)\.(\w+)")
-GUIDELINE_FILE = re.compile(r"(?:\./)?guidelines/.+\.md$")
+GUIDELINE_FILE = re.compile(r"^(?:\./)?(?:guidelines|specs)/.+\.md$")
 
 
 # --------------------------------------------------------------------------- helpers
@@ -405,7 +405,10 @@ def execute_run(i: int, args: argparse.Namespace, batch: Batch) -> dict[str, Any
     (run_dir / "response.txt").write_text(answer, encoding="utf-8")
     changes = collect_changes(workspace, run_dir / "changes.patch") if has_baseline else ("", "", "")
 
-    guideline_files = sum(bool(GUIDELINE_FILE.match(p)) for p in st.files_read)
+    # OpenCode reports absolute paths; the rule files are recognized relative to the workspace
+    prefix = str(workspace.resolve()) + os.sep
+    relative = [p[len(prefix):] if p.startswith(prefix) else p for p in map(os.path.realpath, st.files_read)]
+    guideline_files = sum(bool(GUIDELINE_FILE.match(p)) for p in relative)
     status = (STATUS_TIMEOUT if timed_out
               else STATUS_ERROR if exit_code != 0 or st.error_events else STATUS_OK)
     message = st.error_message

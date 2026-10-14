@@ -34,4 +34,3 @@
 ## 6. Schema management
 
 - **DES-17 Hotfixes by script.** The database administrator may change the schema directly with a script in `db/scripts/`, if a ticket reference is noted in the script.
-- **DES-18 Seed data** may be inserted in the same migration that creates the table.

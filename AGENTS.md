@@ -4,23 +4,25 @@ Guidance for AI coding agents (OpenCode, Claude Code, etc.) that work **on this 
 
 ## Project overview
 
-A pilot study for a master's thesis: how does an agent handle a prompt and the knowledge that is provided to it? The tool `tools/opencode_multirun.py` runs a prompt several times with OpenCode and records quantitative metrics. The agent under test works on `sample_project/` (a PostgreSQL schema with deliberate violations) and gets the guidelines from `sample_guidelines/` in different forms. See `README.md` for the study design.
+A pilot study for a master's thesis: how does an agent handle a prompt and the knowledge that is provided to it? The tool `tools/opencode_multirun.py` runs a prompt several times with OpenCode and records quantitative metrics; `tools/schema_lint.py` checks the schema the agent produced against the 50 rules. The agent under test works on `sample_project/` (a PostgreSQL schema with deliberate violations) and gets the guidelines from `sample_guidelines/` in six scenarios (baseline, AGENTS.md, files, specs, MCP, hybrid). See `README.md` for the study design.
 
 | Path | Purpose |
 |---|---|
 | `tools/opencode_multirun.py` | the measuring tool (single file, standard library only) |
-| `study/` | prompts, configuration, condition runner, ground truth |
+| `tools/schema_lint.py` | the linter (standard library, needs Docker for a throw-away PostgreSQL) |
+| `study/` | prompts, configuration, scenario builder and runners, ground truth |
+| `study/scenarios/` | **generated** by `study/build-scenarios.py` from `sample_guidelines/`; never edit by hand |
 | `sample_project/` | object of the study: `db/migrations/*.sql`, `db/scripts/*.sql` |
 | `sample_guidelines/` | the knowledge given to the agent under test |
-| `docker-compose.yml`, `.env.example` | the docs MCP server (Ollama and OpenCode run on the host) |
+| `docker-compose.yml`, `.env.example` | the two docs MCP servers (Ollama and OpenCode run on the host) |
 | `study/setup-ollama.sh` | pulls the embedding model into the local Ollama |
 
 ## Keep the study valid
 
 1. **Never leak the ground truth.** `study/ground-truth/` must not be copied into `sample_project/`, `sample_guidelines/`, `study/prompts/` or `study/config/`, and no file the agent under test can see may mention the built-in violations. Do not add comments such as "bad", "wrong" or "violates" to the sample SQL.
 2. **Keep the relation of the guidelines hidden.** Names, titles and rule IDs of the three guideline files are neutral on purpose. Do not add descriptions that say that one guideline extends or contradicts another. The relation belongs only into the ground truth.
-3. **Keep prompts identical across conditions.** A prompt must not name a specific guideline or file; the conditions differ only in the provided knowledge.
-4. **Changing the sample changes the ground truth.** If you change a migration or a guideline, update `study/ground-truth/violations.md` in the same change and verify the migrations (see below).
+3. **Keep prompts identical across scenarios.** A prompt must not name a specific guideline, spec or file; the scenarios differ only in the provided knowledge, and all of them carry the same 50 rules.
+4. **Changing the sample changes the ground truth and the linter.** If you change a migration or a guideline, update `study/ground-truth/violations.md` in the same change, update the matching check in `tools/schema_lint.py` (it stops if the rule IDs differ from the guidelines), assign a new rule to a capability in `study/build-scenarios.py`, rebuild the scenarios (`study/build-scenarios.py`) and verify the migrations (see below). Compare the linter on the unchanged `sample_project/` with the ground truth.
 5. **Do not delete data of finished runs.** `results/` is ignored by git; never overwrite a result file. A new study uses a new `--out` directory.
 
 ## The tool (`tools/opencode_multirun.py`)
@@ -40,12 +42,15 @@ A pilot study for a master's thesis: how does an agent handle a prompt and the k
 ## Commands
 
 ```bash
-python3 -m py_compile tools/opencode_multirun.py      # syntax check
+python3 -m py_compile tools/opencode_multirun.py tools/schema_lint.py study/build-scenarios.py   # syntax check
+python3 study/build-scenarios.py                      # rebuild study/scenarios/ after a change of the guidelines
 docker compose config -q                              # validate the compose file
-bash -n study/run.sh study/index-knowledge.sh         # validate the shell scripts
+bash -n study/run.sh study/run-all.sh study/index-knowledge.sh   # validate the shell scripts
 ```
 
 There is no automated test suite. To test the tool without real model calls, put a fake `opencode` (a shell script that prints NDJSON events and changes files in its working directory) first in `PATH` and write to a temporary `--out` directory.
+
+To test the linter, create a results directory with a `runs.csv` (columns `batch_id`, `run_index`, `label`, `prompt`, `status`, `run_dir`) whose run directories contain a `workspace/` copy of `sample_project/` with an additional `V8` migration, and run `tools/schema_lint.py` on it.
 
 To verify the SQL, apply `sample_project/db/migrations/V*.sql` in order to a throw-away PostgreSQL database, e.g. `docker run --rm -d -e POSTGRES_PASSWORD=x postgres:17-alpine`, and stop the container afterwards.
 

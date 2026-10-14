@@ -1,0 +1,36 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "github-copilot/claude-sonnet-5",
+  "autoupdate": false,
+  "share": "disabled",
+  "permission": {
+    "webfetch": "deny",
+    "websearch": "deny",
+    "question": "deny",
+    "external_directory": "deny"
+  },
+  "provider": {
+    "ollama": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Ollama (local)",
+      "options": {
+        "baseURL": "http://localhost:11434/v1"
+      },
+      "models": {
+        "qwen3.5:9b": {
+          "name": "Qwen 3.5 9B"
+        },
+        "gemma4:26b": {
+          "name": "Gemma 4 26B"
+        }
+      }
+    }
+  },
+  "mcp": {
+    "docs": {
+      "type": "remote",
+      "url": "http://localhost:6282/mcp",
+      "enabled": true
+    }
+  }
+}

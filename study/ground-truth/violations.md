@@ -6,7 +6,7 @@ The sample project in `sample_project/` is a database definition (PostgreSQL mig
 |---|---|---|
 | [`database-guidelines.md`](../../sample_guidelines/database-guidelines.md) | base guideline | `DB-01` … `DB-21` |
 | [`database-standards.md`](../../sample_guidelines/database-standards.md) | **extends** the base guideline with additional aspects, no conflicts | `STD-01` … `STD-12` |
-| [`database-design-conventions.md`](../../sample_guidelines/database-design-conventions.md) | **contradicts** the base guideline (and partly the standards) on purpose | `DES-01` … `DES-18` |
+| [`database-design-conventions.md`](../../sample_guidelines/database-design-conventions.md) | **contradicts** the base guideline (and partly the standards) on purpose | `DES-01` … `DES-17` |
 
 Migration files are in `sample_project/db/migrations/`, manually applied scripts in `sample_project/db/scripts/`.
 
@@ -16,7 +16,7 @@ Migration files are in `sample_project/db/migrations/`, manually applied scripts
 |---|---:|---:|---:|
 | Base (`DB`) | 21 | 21 | 71 |
 | Standards (`STD`) | 12 | 10 | 22 |
-| Design conventions (`DES`) | 18 | – | see [conflicts](#part-3-conflicts-of-the-design-conventions) |
+| Design conventions (`DES`) | 17 | – | see [conflicts](#part-3-conflicts-of-the-design-conventions) |
 
 A *finding* is one violation of one rule in one place. The findings of the base guideline and of the standards are counted separately; the design conventions are not a source of findings but of **conflicts** (see below).
 
@@ -327,9 +327,8 @@ The design conventions contradict the base guideline on purpose. Neither documen
 | DES-15 | Similar species share a table | DB-17 | Similar species in one table vs. one table per species | `small_livestock` |
 | DES-16 | Audit columns | DB-18 | Audit columns only on user-edited tables vs. on every table | `treatments`, `shearings`, `stable_assignment` |
 | DES-17 | Hotfixes by script | DB-20 | Schema hotfixes by script vs. only versioned migrations | `db/scripts/hotfix_feed_storage.sql` (but it has no ticket reference, which DES-17 requires) |
-| DES-18 | Seed data | DB-21, STD-11 | Seed data in the creating migration vs. seed data in separate migrations / no DDL and DML together | `tbl_pig` (`V2`) |
 
-- Every one of the 18 design rules is part of at least one conflict.
+- Every one of the 17 design rules is part of at least one conflict.
 - The tables `tbl_pig`, `small_livestock`, `feed`, `treatments`, `rabbits`, `shearings` and `stable_assignment` follow the design conventions in many places and violate the base guideline in the same places.
 - The tables of the base-compliant stack (`stables`, `horses`, `cows`, `donkeys`, ...) violate the design conventions throughout (plural names, `snake_case`, `BIGINT id`, foreign keys, `CHECK`s, `DECIMAL`, `BOOLEAN`).
 
@@ -339,5 +338,7 @@ The design conventions contradict the base guideline on purpose. Neither documen
 
 ## Gaps in the schema that are not deliberate
 
+- `shearings.id` is a `BIGINT` primary key without identity (DB-03); the linter reports it, but it is not part of the counted findings above.
+- The linter (`tools/schema_lint.py`) finds additional violations of `DB-04` (id columns without foreign key: `feed.supplier_id`, `feedings.animal_id`, `treatments.animal_id`) and `DB-12` (`treatments.cost` is nullable) that are not listed in Part 1.
 - `stable_occupancy` has to special-case the different stable references (foreign key, stable name) and `feed_stock_value` inherits the floating point money of `feed`.
 - Seed data in `V7__seed_reference_data.sql` is in a separate migration as required by DB-21 and STD-11, but uses fixed ids (`feed_id = 1`, `animal_id = 1`) that rely on the insert order.
