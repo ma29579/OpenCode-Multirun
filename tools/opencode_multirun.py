@@ -34,7 +34,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, NoReturn, Optional, Sequence
 
-__version__ = "4.3.0"
+__version__ = "4.3.1"
 
 # Columns of the result file. Changing them breaks existing result files, so a new study
 # should start with a new output directory.
@@ -211,6 +211,8 @@ def parse_events(path: Path) -> StreamStats:
                     st.files_read.add(path)
             if part.get("tool") == "execute":  # OpenCode 2 calls MCP tools from code: tools.<server>.<tool>(...)
                 for server, name in MCP_CALL.findall(str(as_dict(state.get("input")).get("code") or "")):
+                    if server == "opencode":  # tools.opencode.* are built in, not an MCP server
+                        continue
                     st.mcp_calls += 1
                     st.tools_used.add(f"{server}.{name}")
         elif kind == "error":
@@ -407,7 +409,8 @@ def execute_run(i: int, args: argparse.Namespace, batch: Batch) -> dict[str, Any
 
     # OpenCode reports absolute paths; the rule files are recognized relative to the workspace
     prefix = str(workspace.resolve()) + os.sep
-    relative = [p[len(prefix):] if p.startswith(prefix) else p for p in map(os.path.realpath, st.files_read)]
+    relative = [p[len(prefix):] if p.startswith(prefix) else p
+                for p in (os.path.realpath(p) if os.path.isabs(p) else p for p in st.files_read)]
     guideline_files = sum(bool(GUIDELINE_FILE.match(p)) for p in relative)
     status = (STATUS_TIMEOUT if timed_out
               else STATUS_ERROR if exit_code != 0 or st.error_events else STATUS_OK)
