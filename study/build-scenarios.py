@@ -7,15 +7,15 @@ Every scenario is a directory in study/scenarios/ whose content is copied into t
 agent (see study/run.sh). The documents of the MCP servers are written to study/scenarios/mcp-*.
 The directory is rebuilt from scratch, do not edit it by hand.
 
-All scenarios carry the same 50 rules; only the form and the channel differ:
+All scenarios carry the same rules; only the form and the channel differ:
 
     baseline          no knowledge
     a-agents-md       all guidelines inside AGENTS.md
     b-guideline-files the three guideline files in guidelines/
     c-spec-files      the rules grouped by requirement, one spec per capability in specs/ (spec-driven)
     d-mcp-server      the three guideline files through an MCP server
-    e-mcp-and-specs   static rules (naming, data types) through an MCP server,
-              dynamic rules (everything else) as specs in specs/
+    e-mcp-and-specs  the general guidelines (DB) through an MCP server,
+                      the project-specific rules (STD, DES) as specs in specs/
 """
 from __future__ import annotations
 
@@ -34,26 +34,29 @@ BASE_CONFIG = ROOT / "study" / "config" / "opencode.json"
 
 RULE_LINE = re.compile(r"^- \*\*(?P<id>[A-Z]+-\d+) (?P<title>.+?)\*\*\s*(?P<text>.*)$")
 
-# capability -> (title, purpose, static). Static capabilities are conventions that rarely change; they
-# go to the MCP server in the scenario "e-mcp-and-specs". The dynamic ones are requirements that depend on the
-# task at hand and live next to the code as specs.
+# capability -> (title, purpose). A capability groups the rules of all guidelines by topic.
 CAPABILITIES = {
-    "naming": ("Naming", "How tables, columns, keys, constraints, indexes and flags are named.", True),
-    "data-types": ("Data types", "Which column type is used for which kind of value.", True),
-    "integrity": ("Integrity", "Keys, relations, nullability and constraints.", False),
-    "modeling": ("Modeling", "Structure of the tables and their audit information.", False),
-    "database-objects": ("Database objects", "Indexes, documentation, views and triggers.", False),
-    "migrations": ("Migrations", "How the schema is created and changed.", False),
+    "naming": ("Naming", "How tables, columns, keys, constraints, indexes and flags are named."),
+    "data-types": ("Data types", "Which column type is used for which kind of value."),
+    "integrity": ("Integrity", "Nullability, constraints and the behavior of relations."),
+    "modeling": ("Modeling", "Structure of the tables and their audit information."),
+    "database-objects": ("Database objects", "Indexes, documentation and views."),
+    "migrations": ("Migrations", "How the schema is created and changed."),
 }
 
 CAPABILITY_OF = {
-    "naming": "DB-01 DB-02 DB-03 DB-04 DB-05 DB-06 STD-02 STD-07 STD-08 STD-09 STD-10 DES-01 DES-02 DES-03 DES-04",
-    "data-types": "DB-07 DB-08 DB-09 DB-10 DB-11 DES-07 DES-08 DES-09 DES-10 DES-11",
-    "integrity": "DB-12 DB-13 DB-14 DB-15 DB-16 DB-19 DES-05 DES-06 DES-12 DES-13 DES-14",
-    "modeling": "DB-17 DB-18 DES-15 DES-16",
-    "database-objects": "STD-01 STD-03 STD-04 STD-05 STD-06",
-    "migrations": "DB-20 DB-21 STD-11 STD-12 DES-17",
+    "naming": "DB-01 DB-02 DB-03 STD-02 STD-06 STD-07 STD-08 STD-09 DES-01 DES-02 DES-03 DES-04",
+    "data-types": "DB-04 DB-05 DES-05",
+    "integrity": "DB-06 DB-07 DB-08 DB-09 DES-06",
+    "modeling": "DB-10 DB-11 DES-07 DES-08",
+    "database-objects": "STD-01 STD-03 STD-04 STD-05",
+    "migrations": "DB-12 STD-10 STD-11 DES-09",
 }
+
+# Static knowledge are the general guidelines (prefix DB): they rarely change and are looked up. Dynamic
+# knowledge are the project-specific requirements (STD, DES): they change with the project and live next
+# to the code as specs.
+STATIC_PREFIX = "DB-"
 
 POINTER_FILES = (
     "# Project notes\n\n"
@@ -73,10 +76,9 @@ POINTER_MCP = (
 )
 POINTER_HYBRID = (
     "# Project notes\n\n"
-    "The requirements for the database of this project come from two sources. "
-    "The naming and data type conventions are provided by the `docs` MCP server (library `guidelines`); "
-    "search them with its tools. All other requirements are specified in the `specs/` directory, "
-    "one `spec.md` per capability (`specs/<capability>/spec.md`). "
+    "The requirements for the database of this project come from two sources: "
+    "the `docs` MCP server (library `guidelines`), which you search with its tools, "
+    "and the `specs/` directory, which has one `spec.md` per capability (`specs/<capability>/spec.md`). "
     "Read the relevant parts of both before you work on the database and follow them.\n"
 )
 
@@ -140,15 +142,11 @@ def config_json(mcp_port: str = "") -> str:
 
 
 def spec_md(capability: str, rules: list[Rule]) -> str:
-    title, purpose, _ = CAPABILITIES[capability]
+    title, purpose = CAPABILITIES[capability]
     out = [f"# {title} Specification", "", "## Purpose", "", purpose, "", "## Requirements", ""]
     for rule in rules:
         out += [f"### Requirement: {rule.id} {rule.title}", "", rule.sentence, ""]
     return "\n".join(out)
-
-
-def rules_md(capability: str, rules: list[Rule]) -> str:
-    return "\n".join([f"# {CAPABILITIES[capability][0]}", ""] + [r.line for r in rules]) + "\n"
 
 
 def main() -> None:
@@ -157,8 +155,7 @@ def main() -> None:
     port_static = env.get("DOCS_MCP_STATIC_PORT", "6282")
     rules = parse_rules()
     by_capability = {cap: [r for r in rules if r.capability == cap] for cap in CAPABILITIES}
-    static = [cap for cap, (_, _, is_static) in CAPABILITIES.items() if is_static]
-    dynamic = [cap for cap in CAPABILITIES if cap not in static]
+    dynamic = {cap: [r for r in cap_rules if not r.id.startswith(STATIC_PREFIX)] for cap, cap_rules in by_capability.items()}
     files = guideline_files()
 
     if OUT.exists():
@@ -185,10 +182,11 @@ def main() -> None:
 
     write(OUT / "e-mcp-and-specs" / "opencode.json", config_json(port_static))
     write(OUT / "e-mcp-and-specs" / "AGENTS.md", POINTER_HYBRID)
-    for cap in dynamic:
-        write(OUT / "e-mcp-and-specs" / "specs" / cap / "spec.md", spec_md(cap, by_capability[cap]))
-    for cap in static:
-        write(OUT / "mcp-static" / f"{cap}.md", rules_md(cap, by_capability[cap]))
+    for cap, cap_rules in dynamic.items():
+        if cap_rules:
+            write(OUT / "e-mcp-and-specs" / "specs" / cap / "spec.md", spec_md(cap, cap_rules))
+    base = GUIDELINES / "database-guidelines.md"
+    write(OUT / "mcp-static" / base.name, base.read_text(encoding="utf-8"))
 
     write(OUT / "README.md",
           "Generated by `study/build-scenarios.py` from `sample_guidelines/`. Do not edit.\n\n"
@@ -196,8 +194,8 @@ def main() -> None:
           "`mcp-static/` holds the documents of the MCP server of the scenario `e-mcp-and-specs`; "
           "the MCP server of `d-mcp-server` indexes `sample_guidelines/`.\n")
 
-    print(f"{len(rules)} rules; static: {sum(len(by_capability[c]) for c in static)}, "
-          f"dynamic: {sum(len(by_capability[c]) for c in dynamic)}")
+    n_static = sum(r.id.startswith(STATIC_PREFIX) for r in rules)
+    print(f"{len(rules)} rules; static: {n_static}, dynamic: {len(rules) - n_static}")
     print(f"scenarios written to {OUT.relative_to(ROOT)}")
 
 

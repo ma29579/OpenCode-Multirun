@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Indexes, documentation, views and triggers.
+Indexes, documentation and views.
 
 ## Requirements
 
@@ -21,7 +21,3 @@ Personal data is marked. Columns that contain personal data (names, e-mail addre
 ### Requirement: STD-05 Views
 
 Views. View names start with `v_` followed by a `snake_case` description (`v_stable_occupancy`). Views list their columns explicitly (no `SELECT *`) and are read-only.
-
-### Requirement: STD-06 Triggers
-
-Triggers. Trigger names follow `trg_<table>_<purpose>`. Triggers are used only for technical concerns such as maintaining audit columns, never for business rules.

@@ -12,4 +12,4 @@ for service in docs-mcp docs-mcp-static; do
   docker compose run --rm --no-deps "$service" scrape guidelines file:///docs
   docker compose up -d "$service"
 done
-echo "Indexed: all guidelines on http://localhost:${DOCS_MCP_PORT:-6281}, static rules on http://localhost:${DOCS_MCP_STATIC_PORT:-6282} (library 'guidelines')"
+echo "Indexed: all guidelines on http://localhost:${DOCS_MCP_PORT:-6281}, general guidelines only on http://localhost:${DOCS_MCP_STATIC_PORT:-6282} (library 'guidelines')"

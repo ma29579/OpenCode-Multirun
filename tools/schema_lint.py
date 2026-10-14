@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Schema linter of the pilot study: checks the result of an agent run against the 50 rules.
+"""Schema linter of the pilot study: checks the result of an agent run against the rules.
 
     tools/schema_lint.py results/study-20261014-120000
 
 For every run in <results>/runs.csv the migrations of the workspace are applied to a fresh
 PostgreSQL database (a throw-away Docker container), the schema is read from the catalog and every
-rule of the guidelines (DB-01 ... DES-17) is checked. Only the objects that the agent created or changed
+rule of the guidelines (DB-01 ... DES-09) is checked. Only the objects that the agent created or changed
 are scored, the existing violations of the sample project are not counted against the agent.
 
 Output: <results>/lint.csv (one row per run), <run_dir>/lint.json (every single check) and a summary.
@@ -137,7 +137,6 @@ CATALOG_QUERIES = {
                    FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid JOIN pg_proc p ON p.oid = t.tgfoid
                    JOIN pg_namespace n ON n.oid = c.relnamespace
                    WHERE NOT t.tgisinternal AND n.nspname = 'public' ORDER BY 1""",
-    "keywords": "SELECT word FROM pg_get_keywords() WHERE catcode = 'R' ORDER BY 1",
 }
 
 
@@ -191,13 +190,13 @@ CURRENCY_SUFFIX = ("_eur", "_usd", "_chf", "_gbp")
 NUMERIC_TYPES = {"int2", "int4", "int8", "float4", "float8", "numeric"}
 DATE_NAME = re.compile(r"(_date|_on|_at|Date|At)$|^(date|born|since|until)$")
 ENUM_NAME = re.compile(r"(^|_)(type|status|phase|state|kind|category)$")
-LIST_NAME = re.compile(r"(_list|_tags?|^tags?|^allowed_|_ids|_csv)$|^allowed_|_list$")
 OPTIONAL_NAME = re.compile(r"(note|descr|comment|remark|diagnos|medicat|email|phone|mobile|city|street|"
                            r"_until$|_to$|^end_|deleted_|cancel)", re.I)
 PII_NAME = re.compile(r"(^|_)(first_name|last_name|full_name|email|phone|mobile|street|postal_code|zip|city|address)"
                       r"($|_)", re.I)
 PERSON_TABLES = {"customers", "employees", "veterinarians", "users", "persons", "contacts", "clients"}
-SPECIES = {"horse", "cow", "donkey", "pig", "goat", "sheep", "rabbit"}
+SPECIES = {"horse", "cow", "donkey", "pig", "goat", "sheep", "rabbit", "chicken", "duck", "goose", "turkey"}
+ANIMAL_CORE = {"name": ("varchar",), "birth_date": ("date",), "weight_kg": ("numeric",), "stable_id": ("int8",)}
 DISCRIMINATORS = {"animal_type", "species", "type", "kind"}
 DDL = re.compile(r"\b(create|alter|drop)\s+(or\s+replace\s+)?(unique\s+)?(table|index|view|trigger|function|type|"
                  r"schema|sequence|extension)\b", re.I)
@@ -205,6 +204,8 @@ DML = re.compile(r"\b(insert\s+into|update\s+[\w\".]+\s+set|delete\s+from)\b", r
 
 
 def singular(name: str) -> str:
+    if name.endswith(("us", "is")):  # status, bonus
+        return name
     if name.endswith("ies"):
         return name[:-3] + "y"
     if name.endswith("sses"):
@@ -247,7 +248,6 @@ class Schema:
         for trg in data["triggers"]:
             self.triggers[trg["table"]].append(trg)
         self.views = {v["name"]: v for v in data["views"]}
-        self.keywords = {k["word"] for k in data["keywords"]} | {"year"}
         self.files = files
 
     # constraints
@@ -299,18 +299,13 @@ class Schema:
         return [c for c in self.plain_cols(t) if c["typname"] == "bool" or re.match(r"(is|has)[_A-Z]", c["name"])
                 or (c["typname"] == "bpchar" and c["len"] == 1)]
 
-    def text_cols(self, t: str) -> list[dict]:
-        return [c for c in self.cols[t] if c["typname"] in ("text", "varchar")]
-
     def date_cols(self, t: str) -> list[dict]:
         return [c for c in self.plain_cols(t) if DATE_NAME.search(c["name"]) or c["typname"] in ("date", "timestamp", "timestamptz")]
 
-    def list_cols(self, t: str) -> list[dict]:
-        return [c for c in self.plain_cols(t) if c["typcat"] == "A" or LIST_NAME.search(c["name"])]
-
     def is_animal(self, t: str) -> bool:
         base = t[4:] if t.startswith("tbl_") else t
-        return singular(base) in SPECIES or base in ("small_livestock", "livestock")
+        names = {c["name"] for c in self.cols[t]}
+        return singular(base) in SPECIES or base in ("small_livestock", "livestock") or len(names & set(ANIMAL_CORE)) >= 3
 
     def id_cols(self, t: str) -> list[str]:
         return [c["name"] for c in self.cols[t] if c["name"].endswith(("_id", "Id")) and c["name"] not in self.pk_cols(t)]
@@ -386,11 +381,10 @@ def db01(s: Schema) -> list[Item]:
 def db02(s: Schema) -> list[Item]:
     out = []
     for t in s.tables:
-        for c in s.cols[t]:
-            n = c["name"]
-            prefixed = n.startswith(t + "_") or bool(re.fullmatch(rf"{re.escape(singular(t))}_(name|type|status|code|number)", n))
-            ok = bool(re.fullmatch(r"[a-z][a-z0-9_]*", n)) and not prefixed
-            out.append(Item("DB-02", f"table:{t}", f"{t}.{n}", ok))
+        pk = s.pk(t)
+        col = next((c for c in s.cols[t] if pk and pk["cols"] == [c["name"]]), None)
+        ok = bool(col and col["name"] == "id" and col["typname"] == "int8" and col["identity"] in ("a", "d"))
+        out.append(Item("DB-02", f"table:{t}", t, ok, "" if ok else "primary key is not 'id BIGINT' identity"))
     return out
 
 
@@ -398,10 +392,12 @@ def db02(s: Schema) -> list[Item]:
 def db03(s: Schema) -> list[Item]:
     out = []
     for t in s.tables:
-        pk = s.pk(t)
-        col = next((c for c in s.cols[t] if pk and pk["cols"] == [c["name"]]), None)
-        ok = bool(col and col["name"] == "id" and col["typname"] == "int8" and col["identity"] in ("a", "d"))
-        out.append(Item("DB-03", f"table:{t}", t, ok, "" if ok else "primary key is not 'id BIGINT' identity"))
+        for fk in s.fks(t):
+            ok = len(fk["cols"]) == 1 and fk["cols"][0].endswith("_id")
+            out.append(Item("DB-03", f"table:{t}", f"{t}.{'+'.join(fk['cols'])}", ok, "foreign key column must end with _id"))
+        for c in s.plain_cols(t):
+            if c["name"].endswith("_id") and c["name"] not in s.fk_cols(t):
+                out.append(Item("DB-03", f"table:{t}", f"{t}.{c['name']}", False, "id column without foreign key"))
     return out
 
 
@@ -409,95 +405,34 @@ def db03(s: Schema) -> list[Item]:
 def db04(s: Schema) -> list[Item]:
     out = []
     for t in s.tables:
-        for fk in s.fks(t):
-            ok = len(fk["cols"]) == 1 and fk["cols"][0].endswith("_id")
-            out.append(Item("DB-04", f"table:{t}", f"{t}.{'+'.join(fk['cols'])}", ok, "foreign key column must end with _id"))
-        for c in s.plain_cols(t):
-            if c["name"].endswith("_id") and c["name"] not in s.fk_cols(t):
-                out.append(Item("DB-04", f"table:{t}", f"{t}.{c['name']}", False, "id column without foreign key"))
+        for c in s.money_quantity_cols(t):
+            if s.kind(t, c) == "money":
+                ok = c["typname"] == "numeric" and c["scale"] == 2
+            else:
+                ok = c["typname"] not in ("float4", "float8")
+            out.append(Item("DB-04", f"table:{t}", f"{t}.{c['name']}", ok, c["type"]))
     return out
 
 
 @rule("DB-05")
 def db05(s: Schema) -> list[Item]:
-    out = []
-    for t in s.tables:
-        for c in s.cons[t]:
-            cols = "_".join(c["cols"])
-            if c["type"] == "p":
-                ok = c["name"] == f"pk_{t}"
-            elif c["type"] == "f":
-                ok = c["name"] == f"fk_{t}_{cols}"
-            elif c["type"] == "u":
-                ok = c["name"].startswith(f"uq_{t}_")
-            else:
-                continue
-            out.append(Item("DB-05", f"table:{t}", f"{t}:{c['name']}", ok))
-        for ix in s.idx[t]:
-            if not ix["by_constraint"] and not ix["pk"]:
-                out.append(Item("DB-05", f"table:{t}", f"{t}:{ix['name']}", ix["name"].startswith(f"idx_{t}_")))
-    return out
+    return [Item("DB-05", f"table:{t}", f"{t}.{c['name']}",
+                 c["typname"] in ("varchar", "text") and c["name"] in s.checked_cols(t), c["type"])
+            for t in s.tables for c in s.enum_cols(t)]
 
 
 @rule("DB-06")
 def db06(s: Schema) -> list[Item]:
     out = []
     for t in s.tables:
-        out.append(Item("DB-06", f"table:{t}", t, t not in s.keywords))
-        out += [Item("DB-06", f"table:{t}", f"{t}.{c['name']}", c["name"] not in s.keywords) for c in s.cols[t]]
+        loose = [c["name"] for c in s.cols[t] if not c["notnull"] and c["name"] not in s.fk_cols(t)
+                 and not OPTIONAL_NAME.search(c["name"])]
+        out.append(Item("DB-06", f"table:{t}", t, not loose, "nullable: " + ", ".join(loose) if loose else ""))
     return out
 
 
 @rule("DB-07")
 def db07(s: Schema) -> list[Item]:
-    out = []
-    for t in s.tables:
-        for c in s.money_quantity_cols(t):
-            if s.kind(t, c) == "money":
-                ok = c["typname"] == "numeric" and c["scale"] == 2
-            else:
-                ok = c["typname"] not in ("float4", "float8")
-            out.append(Item("DB-07", f"table:{t}", f"{t}.{c['name']}", ok, c["type"]))
-    return out
-
-
-@rule("DB-08")
-def db08(s: Schema) -> list[Item]:
-    return [Item("DB-08", f"table:{t}", f"{t}.{c['name']}", c["typname"] in ("date", "timestamp", "timestamptz"), c["type"])
-            for t in s.tables for c in s.date_cols(t)]
-
-
-@rule("DB-09")
-def db09(s: Schema) -> list[Item]:
-    return [Item("DB-09", f"table:{t}", f"{t}.{c['name']}",
-                 c["typname"] in ("varchar", "text") and c["name"] in s.checked_cols(t), c["type"])
-            for t in s.tables for c in s.enum_cols(t)]
-
-
-@rule("DB-10")
-def db10(s: Schema) -> list[Item]:
-    return [Item("DB-10", f"table:{t}", f"{t}.{c['name']}", c["typname"] == "bool", c["type"])
-            for t in s.tables for c in s.flag_cols(t)]
-
-
-@rule("DB-11")
-def db11(s: Schema) -> list[Item]:
-    return [Item("DB-11", f"table:{t}", f"{t}.{c['name']}", c["typname"] == "varchar" and c["len"] is not None, c["type"])
-            for t in s.tables for c in s.text_cols(t)]
-
-
-@rule("DB-12")
-def db12(s: Schema) -> list[Item]:
-    out = []
-    for t in s.tables:
-        loose = [c["name"] for c in s.cols[t] if not c["notnull"] and c["name"] not in s.fk_cols(t)
-                 and not OPTIONAL_NAME.search(c["name"])]
-        out.append(Item("DB-12", f"table:{t}", t, not loose, "nullable: " + ", ".join(loose) if loose else ""))
-    return out
-
-
-@rule("DB-13")
-def db13(s: Schema) -> list[Item]:
     out = []
     for t in s.tables:
         unique_sets = [set(c["cols"]) for c in s.cons[t] if c["type"] in ("p", "u")] + \
@@ -507,91 +442,55 @@ def db13(s: Schema) -> list[Item]:
         if t not in PERSON_TABLES and not s.is_animal(t) and "name" in [c["name"] for c in s.cols[t]]:
             natural.append("name")
         for col in natural:
-            out.append(Item("DB-13", f"table:{t}", f"{t}.{col}", any(col in u for u in unique_sets)))
+            out.append(Item("DB-07", f"table:{t}", f"{t}.{col}", any(col in u for u in unique_sets)))
         if s.is_join(t):
             ids = set(s.id_cols(t))
-            out.append(Item("DB-13", f"table:{t}", f"{t}:join", any(len(ids & u) >= 2 for u in unique_sets)))
+            out.append(Item("DB-07", f"table:{t}", f"{t}:join", any(len(ids & u) >= 2 for u in unique_sets)))
     return out
 
 
-@rule("DB-14")
-def db14(s: Schema) -> list[Item]:
-    names = set(s.tables) | {singular(t) for t in s.tables}
-    out = []
-    for t in s.tables:
-        bad = []
-        for c in s.plain_cols(t):
-            n = c["name"]
-            if n.endswith("_id") and n not in s.fk_cols(t):
-                bad.append(n)
-            elif n in names and n != singular(t) and n != t:
-                bad.append(n)
-            elif re.fullmatch(r"(\w+)_(name|code)", n) and re.fullmatch(r"(\w+)_(name|code)", n).group(1) in names \
-                    and n.split("_")[0] != singular(t):
-                bad.append(n)
-        out.append(Item("DB-14", f"table:{t}", t, not bad, "relation without foreign key: " + ", ".join(bad) if bad else ""))
-    return out
-
-
-@rule("DB-15")
-def db15(s: Schema) -> list[Item]:
-    return [Item("DB-15", f"table:{t}", f"{t}.{c['name']}", c["name"] in s.checked_cols(t))
+@rule("DB-08")
+def db08(s: Schema) -> list[Item]:
+    return [Item("DB-08", f"table:{t}", f"{t}.{c['name']}", c["name"] in s.checked_cols(t))
             for t in s.tables for c in s.money_quantity_cols(t)]
 
 
-@rule("DB-16")
-def db16(s: Schema) -> list[Item]:
-    return [Item("DB-16", f"table:{t}", t, not s.list_cols(t), ", ".join(c["name"] for c in s.list_cols(t)))
-            for t in s.tables]
+@rule("DB-09")
+def db09(s: Schema) -> list[Item]:
+    return [Item("DB-09", f"table:{t}", f"{t}:{fk['name']}", fk["ondelete"] in ("r", "n"), f"on delete '{fk['ondelete']}'")
+            for t in s.tables for fk in s.fks(t)]
 
 
-@rule("DB-17")
-def db17(s: Schema) -> list[Item]:
-    core = {"name": ("varchar",), "birth_date": ("date",), "weight_kg": ("numeric",), "stable_id": ("int8",)}
+@rule("DB-10")
+def db10(s: Schema) -> list[Item]:
     out = []
     for t in s.tables:
         if not s.is_animal(t):
             continue
         by_name = {c["name"]: c for c in s.cols[t]}
-        missing = [n for n, types in core.items() if n not in by_name or by_name[n]["typname"] not in types]
+        missing = [n for n, types in ANIMAL_CORE.items() if n not in by_name or by_name[n]["typname"] not in types]
         shared = [c["name"] for c in s.cols[t] if c["name"] in DISCRIMINATORS]
-        out.append(Item("DB-17", f"table:{t}", t, not missing and not shared,
+        out.append(Item("DB-10", f"table:{t}", t, not missing and not shared,
                         ("differs: " + ", ".join(missing) if missing else "") + (" shared table" if shared else "")))
     return out
 
 
-@rule("DB-18")
-def db18(s: Schema) -> list[Item]:
+@rule("DB-11")
+def db11(s: Schema) -> list[Item]:
     out = []
     for t in s.tables:
         by_name = {c["name"]: c for c in s.cols[t]}
         ok = all(n in by_name and by_name[n]["notnull"] and by_name[n]["typname"] in ("timestamp", "timestamptz")
                  for n in ("created_at", "updated_at"))
-        out.append(Item("DB-18", f"table:{t}", t, ok))
+        out.append(Item("DB-11", f"table:{t}", t, ok))
     return out
 
 
-@rule("DB-19")
-def db19(s: Schema) -> list[Item]:
-    return [Item("DB-19", f"table:{t}", f"{t}:{fk['name']}", fk["ondelete"] in ("r", "n"), f"on delete '{fk['ondelete']}'")
-            for t in s.tables for fk in s.fks(t)]
-
-
-@rule("DB-20")
-def db20(s: Schema) -> list[Item]:
-    out = [Item("DB-20", f"file:{p}", p, bool(MIGRATION_NAME.match(Path(p).name)), "file name") for p in migrations(s)]
-    out += [Item("DB-20", f"file:{p}", p, not DDL.search(s.sql_of(p)), "schema change outside of a migration")
+@rule("DB-12")
+def db12(s: Schema) -> list[Item]:
+    out = [Item("DB-12", f"file:{p}", p, bool(MIGRATION_NAME.match(Path(p).name)), "file name") for p in migrations(s)]
+    out += [Item("DB-12", f"file:{p}", p, not DDL.search(s.sql_of(p)), "schema change outside of a migration")
             for p in scripts(s)]
-    return out
-
-
-@rule("DB-21")
-def db21(s: Schema) -> list[Item]:
-    out = []
-    for p in migrations(s):
-        sql = s.sql_of(p)
-        out.append(Item("DB-21", f"file:{p}", p, not (re.search(r"\bcreate\s+table\b", sql, re.I)
-                                                      and re.search(r"\binsert\s+into\b", sql, re.I))))
     return out
 
 
@@ -663,100 +562,88 @@ def std05(s: Schema) -> list[Item]:
 
 @rule("STD-06")
 def std06(s: Schema) -> list[Item]:
-    out = []
-    for t, triggers in s.triggers.items():
-        for trg in triggers:
-            scope = f"view:{t}" if t in s.views else f"table:{t}"
-            business = re.search(r"\b(insert|delete|update)\b\s|raise\s+exception", strip_sql(trg["src"]), re.I)
-            ok = bool(re.fullmatch(rf"trg_{re.escape(t)}_[a-z0-9_]+", trg["name"])) and not business
-            out.append(Item("STD-06", scope, f"{t}:{trg['name']}", ok))
-    return out
+    return [Item("STD-06", f"table:{t}", f"{t}.{c['name']}", c["name"].startswith(("is_", "has_")))
+            for t in s.tables for c in s.flag_cols(t)]
 
 
 @rule("STD-07")
 def std07(s: Schema) -> list[Item]:
-    return [Item("STD-07", f"table:{t}", f"{t}.{c['name']}", c["name"].startswith(("is_", "has_")))
-            for t in s.tables for c in s.flag_cols(t)]
-
-
-@rule("STD-08")
-def std08(s: Schema) -> list[Item]:
     out = []
     for t in s.tables:
         for c in s.date_cols(t):
             suffixes = {"date": ("_date", "_on"), "timestamp": ("_at",), "timestamptz": ("_at",)}.get(c["typname"], ("_date", "_on", "_at"))
-            out.append(Item("STD-08", f"table:{t}", f"{t}.{c['name']}", c["name"].endswith(suffixes)))
+            out.append(Item("STD-07", f"table:{t}", f"{t}.{c['name']}", c["name"].endswith(suffixes)))
     return out
+
+
+@rule("STD-08")
+def std08(s: Schema) -> list[Item]:
+    return [Item("STD-08", f"table:{t}", f"{t}.{c['name']}", has_unit(c["name"]))
+            for t in s.tables for c in s.kind_cols(t, "quantity")]
 
 
 @rule("STD-09")
 def std09(s: Schema) -> list[Item]:
-    return [Item("STD-09", f"table:{t}", f"{t}.{c['name']}", has_unit(c["name"]))
-            for t in s.tables for c in s.kind_cols(t, "quantity")]
+    return [Item("STD-09", f"table:{t}", f"{t}.{c['name']}", c["name"].endswith(CURRENCY_SUFFIX))
+            for t in s.tables for c in s.kind_cols(t, "money")]
 
 
 @rule("STD-10")
 def std10(s: Schema) -> list[Item]:
-    return [Item("STD-10", f"table:{t}", f"{t}.{c['name']}", c["name"].endswith(CURRENCY_SUFFIX))
-            for t in s.tables for c in s.kind_cols(t, "money")]
+    out = []
+    for p in migrations(s):
+        sql = s.sql_of(p)
+        out.append(Item("STD-10", f"file:{p}", p, not (DDL.search(sql) and DML.search(sql))))
+    return out
 
 
 @rule("STD-11")
 def std11(s: Schema) -> list[Item]:
     out = []
     for p in migrations(s):
-        sql = s.sql_of(p)
-        out.append(Item("STD-11", f"file:{p}", p, not (DDL.search(sql) and DML.search(sql))))
-    return out
-
-
-@rule("STD-12")
-def std12(s: Schema) -> list[Item]:
-    out = []
-    for p in migrations(s):
         first = next((ln.strip() for ln in s.files[p].splitlines() if ln.strip()), "")
-        out.append(Item("STD-12", f"file:{p}", p, first.startswith("--") and len(first.strip("- ")) > 0))
+        out.append(Item("STD-11", f"file:{p}", p, first.startswith("--") and len(first.strip("- ")) > 0))
     return out
 
 
-# -- DES: design conventions (adopted = True)
+# -- DES: conflicting conventions (adopted = True)
 
 @rule("DES-01")
 def des01(s: Schema) -> list[Item]:
-    return [Item("DES-01", f"table:{t}", t, t.startswith("tbl_") and not is_plural(t[4:])) for t in s.tables]
+    return [Item("DES-01", f"table:{t}", t, not is_plural(t) and not t.startswith("tbl_")) for t in s.tables]
 
 
 @rule("DES-02")
 def des02(s: Schema) -> list[Item]:
-    return [Item("DES-02", f"table:{t}", f"{t}.{c['name']}", "_" not in c["name"]) for t in s.tables for c in s.cols[t]]
-
-
-@rule("DES-03")
-def des03(s: Schema) -> list[Item]:
     out = []
     for t in s.tables:
         pk = s.pk(t)
         col = next((c for c in s.cols[t] if pk and pk["cols"] == [c["name"]]), None)
-        out.append(Item("DES-03", f"table:{t}", t, bool(col and re.fullmatch(r"[a-z]+Id", col["name"]) and col["typname"] == "int4")))
+        out.append(Item("DES-02", f"table:{t}", t, bool(col and col["name"] in (f"{t}_id", f"{singular(t)}_id")
+                                                         and col["typname"] == "uuid")))
     return out
+
+
+@rule("DES-03")
+def des03(s: Schema) -> list[Item]:
+    return [Item("DES-03", f"table:{t}", f"{t}.{c['name']}", not c["name"].startswith(("is_", "has_")))
+            for t in s.tables for c in s.flag_cols(t)]
 
 
 @rule("DES-04")
 def des04(s: Schema) -> list[Item]:
-    patterns = {"p": r"{t}_pkey", "f": r"{t}_.+_fkey", "u": r"{t}_.+_key", "c": r"{t}_.*check\d*"}
-    out = []
-    for t in s.tables:
-        for c in s.cons[t]:
-            out.append(Item("DES-04", f"table:{t}", f"{t}:{c['name']}", bool(re.fullmatch(patterns[c["type"]].format(t=re.escape(t)), c["name"]))))
-        for i in s.idx[t]:
-            if not i["by_constraint"] and not i["pk"]:
-                out.append(Item("DES-04", f"table:{t}", f"{t}:{i['name']}", bool(re.fullmatch(rf"{re.escape(t)}_.+_idx", i["name"]))))
-    return out
+    return [Item("DES-04", f"table:{t}", f"{t}.{c['name']}", not c["name"].endswith(CURRENCY_SUFFIX))
+            for t in s.tables for c in s.kind_cols(t, "money")]
 
 
 @rule("DES-05")
 def des05(s: Schema) -> list[Item]:
-    return [Item("DES-05", f"table:{t}", t, not s.fks(t)) for t in s.tables]
+    out = []
+    for t in s.tables:
+        out += [Item("DES-05", f"table:{t}", f"{t}.{c['name']}", False) for c in s.enum_cols(t)]
+        out += [Item("DES-05", f"table:{t}", f"{t}.{c['name']}", True) for c in s.cols[t]
+                if c["name"] in s.fk_cols(t) and ENUM_NAME.search(c["name"][:-3] if c["name"].endswith("_id") else "-")]
+    return out
 
 
 @rule("DES-06")
@@ -766,63 +653,18 @@ def des06(s: Schema) -> list[Item]:
 
 @rule("DES-07")
 def des07(s: Schema) -> list[Item]:
-    return [Item("DES-07", f"table:{t}", f"{t}.{c['name']}", c["typname"] == "float8")
-            for t in s.tables for c in s.money_quantity_cols(t)]
+    return [Item("DES-07", f"table:{t}", t, any(c["name"] in DISCRIMINATORS for c in s.cols[t])) for t in s.tables if s.is_animal(t)]
 
 
 @rule("DES-08")
 def des08(s: Schema) -> list[Item]:
-    return [Item("DES-08", f"table:{t}", f"{t}.{c['name']}", c["typname"] == "varchar" and c["len"] == 10)
-            for t in s.tables for c in s.date_cols(t) if not c["name"].endswith(("_at", "At")) and c["typname"] not in ("timestamp", "timestamptz")]
+    return [Item("DES-08", f"table:{t}", t, not any(is_audit(c["name"]) for c in s.cols[t]))
+            for t in s.tables if s.is_join(t) or s.is_reference(t) or s.is_log(t)]
 
 
 @rule("DES-09")
 def des09(s: Schema) -> list[Item]:
-    return [Item("DES-09", f"table:{t}", f"{t}.{c['name']}", c["typname"] in ("int2", "int4")) for t in s.tables for c in s.enum_cols(t)]
-
-
-@rule("DES-10")
-def des10(s: Schema) -> list[Item]:
-    return [Item("DES-10", f"table:{t}", f"{t}.{c['name']}", c["typname"] == "bpchar" and c["len"] == 1)
-            for t in s.tables for c in s.flag_cols(t)]
-
-
-@rule("DES-11")
-def des11(s: Schema) -> list[Item]:
-    return [Item("DES-11", f"table:{t}", f"{t}.{c['name']}", c["len"] is None) for t in s.tables for c in s.text_cols(t)]
-
-
-@rule("DES-12")
-def des12(s: Schema) -> list[Item]:
-    return [Item("DES-12", f"table:{t}", t, not any(c["notnull"] for c in s.cols[t] if c["name"] not in s.pk_cols(t)))
-            for t in s.tables]
-
-
-@rule("DES-13")
-def des13(s: Schema) -> list[Item]:
-    return [Item("DES-13", f"table:{t}", t, not s.checks(t)) for t in s.tables]
-
-
-@rule("DES-14")
-def des14(s: Schema) -> list[Item]:
-    return [Item("DES-14", f"table:{t}", f"{t}.{c['name']}", c["typname"] in ("text", "varchar"))
-            for t in s.tables for c in s.list_cols(t)]
-
-
-@rule("DES-15")
-def des15(s: Schema) -> list[Item]:
-    return [Item("DES-15", f"table:{t}", t, any(c["name"] in DISCRIMINATORS for c in s.cols[t])) for t in s.tables if s.is_animal(t)]
-
-
-@rule("DES-16")
-def des16(s: Schema) -> list[Item]:
-    return [Item("DES-16", f"table:{t}", t, not any(is_audit(c["name"]) for c in s.cols[t]))
-            for t in s.tables if s.is_join(t) or s.is_reference(t) or s.is_log(t)]
-
-
-@rule("DES-17")
-def des17(s: Schema) -> list[Item]:
-    return [Item("DES-17", f"file:{p}", p, bool(re.search(r"[A-Z]{2,}-\d+|ticket\s*#?\w+|#\d+", s.files[p], re.I)))
+    return [Item("DES-09", f"file:{p}", p, bool(re.search(r"[A-Z]{2,}-\d+|ticket\s*#?\w+|#\d+", s.files[p], re.I)))
             for p in scripts(s)]
 
 
@@ -921,7 +763,7 @@ def summarize(rows: list[dict[str, Any]]) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Check the results of a study against the 50 rules.")
+    parser = argparse.ArgumentParser(description="Check the results of a study against the rules.")
     parser.add_argument("results", type=Path, help="results directory with runs.csv")
     args = parser.parse_args()
 

@@ -5,7 +5,7 @@
 # see study/setup-ollama.sh.
 #
 # docs-mcp          scenario d-mcp-server: all guidelines            (port 6281)
-# docs-mcp-static   scenario e-mcp-and-specs: static rules only      (port 6282)
+# docs-mcp-static   scenario e-mcp-and-specs: general guidelines only (port 6282)
 # The servers are separate so that the agent of one scenario cannot see the knowledge of the other.
 #
 # Usage:
