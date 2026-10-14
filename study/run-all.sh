@@ -4,18 +4,19 @@
 #   study/run-all.sh [runs per combination]
 #
 # Environment:
-#   MODELS    models of the agent (default: github-copilot/claude-sonnet-5 github-copilot/gpt-5.5)
-#   SCENARIOS scenarios to run (default: all eight)
+#   MODELS    models of the agent (default: github-copilot/claude-sonnet-5 github-copilot/gpt-5.5);
+#             "claude:<model>" runs the model with Claude Code instead of OpenCode, e.g. claude:claude-sonnet-5
+#   SCENARIOS scenarios to run (default: all nine)
 #   PROMPTS   prompts to run (default: add-tables add-animals fix-feed-table urgent-fix review-schema)
 #
-# 2 models x 8 scenarios x 5 prompts x 3 runs = 240 agent runs. Check the quota of your model provider first.
+# 2 models x 9 scenarios x 5 prompts x 3 runs = 270 agent runs. Check the quota of your model provider first.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 runs=${1:-3}
 export OUT=results/study-$(date +%Y%m%d-%H%M%S)   # a new directory for every study
 models=${MODELS:-github-copilot/claude-sonnet-5 github-copilot/gpt-5.5}
-scenarios=${SCENARIOS:-baseline a-agents-md b-guideline-files c-spec-files d-mcp-server e-mcp-and-specs f-swapped-mcp-and-specs g-split-spec-files}
+scenarios=${SCENARIOS:-baseline a-agents-md b-guideline-files c-spec-files d-mcp-server e-mcp-and-specs g-split-spec-files h-target-mcp-conflict-specs i-conflict-mcp-target-specs}
 prompts=${PROMPTS:-add-tables add-animals fix-feed-table urgent-fix review-schema}
 
 python3 study/build-scenarios.py >/dev/null
@@ -25,7 +26,8 @@ for scenario in $scenarios; do
   case "$scenario" in
     d-mcp-server)    port=${DOCS_MCP_PORT:-6281} ;;
     e-mcp-and-specs) port=${DOCS_MCP_STATIC_PORT:-6282} ;;
-    f-swapped-mcp-and-specs) port=${DOCS_MCP_SWAPPED_PORT:-6283} ;;
+    h-target-mcp-conflict-specs) port=${DOCS_MCP_TARGET_PORT:-6283} ;;
+    i-conflict-mcp-target-specs) port=${DOCS_MCP_CONFLICT_PORT:-6284} ;;
     *) continue ;;
   esac
   if ! curl -s -o /dev/null -m 5 "http://localhost:$port/"; then
@@ -38,9 +40,14 @@ done
 echo "Output: $OUT"
 for prompt in $prompts; do
   for scenario in $scenarios; do
-    for model in $models; do
-      echo "=== $model / $scenario / $prompt ==="
-      MODEL=$model study/run.sh "$scenario" "$prompt" "$runs"
+    for entry in $models; do
+      case "$entry" in
+        claude:*)   harness=claude;   model=${entry#claude:} ;;
+        opencode:*) harness=opencode; model=${entry#opencode:} ;;
+        *)          harness=opencode; model=$entry ;;
+      esac
+      echo "=== $harness / $model / $scenario / $prompt ==="
+      HARNESS=$harness MODEL=$model study/run.sh "$scenario" "$prompt" "$runs"
     done
   done
 done

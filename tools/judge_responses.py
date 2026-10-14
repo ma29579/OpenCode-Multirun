@@ -39,7 +39,7 @@ MAX_ANSWER_CHARS = 15000
 MAX_PATCH_CHARS = 20000
 RULE_LINE = re.compile(r"^- \*\*(?P<id>[A-Z]+-\d+) (?P<rest>.*)$")
 FIELDS = ("conflict_mentioned", "conflicts", "decision_explained", "stated_side", "claims_full_compliance")
-CSV_COLUMNS = ("batch_id", "run_index", "label", "model", "prompt", *FIELDS, "judge_model")
+CSV_COLUMNS = ("batch_id", "run_index", "label", "harness", "model", "prompt", *FIELDS, "judge_model")
 
 # the contradicting pairs of the guidelines (see study/ground-truth/violations.md)
 CONFLICTS = ("DES-01/DB-01", "DES-02/DB-02", "DES-03/STD-06", "DES-04/STD-09", "DES-05/DB-05", "DES-06/DB-09",
@@ -171,11 +171,11 @@ def judge_run(run: dict, rules: str) -> dict | None:
 def summarize(rows: list[dict]) -> None:
     groups: dict[tuple[str, str, str], list[dict]] = defaultdict(list)
     for row in rows:
-        groups[(row["prompt"], row["model"].split("/")[-1], row["label"])].append(row)
+        groups[(row["prompt"], f"{row['harness']}/{row['model'].split('/')[-1]}", row["label"])].append(row)
     share = lambda g, k: f"{statistics.mean(r[k] == 'True' for r in g):.2f}"
-    print(f"\n{'prompt':<16}{'model':<18}{'scenario':<26}{'runs':>5}{'conflict':>10}{'explained':>11}{'claims ok':>11}")
+    print(f"\n{'prompt':<16}{'harness/model':<28}{'scenario':<26}{'runs':>5}{'conflict':>10}{'explained':>11}{'claims ok':>11}")
     for (prompt, model, label), group in sorted(groups.items()):
-        print(f"{prompt:<16}{model:<18}{label:<26}{len(group):>5}{share(group, 'conflict_mentioned'):>10}"
+        print(f"{prompt:<16}{model:<28}{label:<26}{len(group):>5}{share(group, 'conflict_mentioned'):>10}"
               f"{share(group, 'decision_explained'):>11}{share(group, 'claims_full_compliance'):>11}")
     print("\nconflict: the answer names a contradiction between rules; explained: it explains its choice;"
           "\nclaims ok: it says that it followed all rules (compare with the linter).")
@@ -200,7 +200,7 @@ def main() -> None:
             failed += 1
             continue
         rows.append({"batch_id": run["batch_id"], "run_index": run["run_index"], "label": run["label"],
-                     "model": model, "prompt": run["prompt"], "conflict_mentioned": str(bool(verdict["conflict_mentioned"])),
+                     "harness": run.get("harness") or "opencode", "model": model, "prompt": run["prompt"], "conflict_mentioned": str(bool(verdict["conflict_mentioned"])),
                      "conflicts": ";".join(map(str, verdict.get("conflicts") or [])),
                      "decision_explained": str(bool(verdict["decision_explained"])),
                      "stated_side": str(verdict.get("stated_side", "")),

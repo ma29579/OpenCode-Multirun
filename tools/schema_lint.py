@@ -44,7 +44,7 @@ IMAGE = "postgres:17-alpine"
 SOURCES = ("DB", "STD", "DES")
 
 LINT_COLUMNS = (
-    "batch_id", "run_index", "label", "model", "prompt", "status", "applied", "error", "touched",
+    "batch_id", "run_index", "label", "harness", "model", "prompt", "status", "applied", "error", "touched",
     "db_applicable", "db_satisfied", "db_rate", "db_checks", "db_passed",
     "std_applicable", "std_satisfied", "std_rate", "std_checks", "std_passed",
     "des_applicable", "des_satisfied", "des_rate", "des_checks", "des_passed",
@@ -750,18 +750,18 @@ def verify_rule_coverage(guidelines: Path) -> None:
 def summarize(rows: list[dict[str, Any]]) -> None:
     groups: dict[tuple[str, str, str], list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
-        groups[(row["prompt"], row["model"].split("/")[-1], row["label"])].append(row)
+        groups[(row["prompt"], f"{row['harness']}/{row['model'].split('/')[-1]}", row["label"])].append(row)
 
     def mean(values: list[float]) -> str:
         return f"{statistics.mean(values):.2f}" if values else "-"
 
-    print(f"\n{'prompt':<16}{'model':<18}{'scenario':<19}{'runs':>5}{'applied':>8}{'DB':>7}{'STD':>7}{'DES':>7}{'regr':>6}{'viol.':>7}")
+    print(f"\n{'prompt':<16}{'harness/model':<28}{'scenario':<19}{'runs':>5}{'applied':>8}{'DB':>7}{'STD':>7}{'DES':>7}{'regr':>6}{'viol.':>7}")
     for (prompt, model, label), group in sorted(groups.items()):
         applied = [r for r in group if r["applied"] == 1 and r["touched"]]
         rates = {k: [float(r[f"{k}_rate"]) for r in applied if r[f"{k}_rate"] != ""] for k in ("db", "std", "des")}
         regr = mean([float(r["regressions"]) for r in applied])
         viol = mean([float(r["violations_result"]) for r in applied])
-        print(f"{prompt:<16}{model:<18}{label:<19}{len(group):>5}{sum(r['applied'] == 1 for r in group):>8}"
+        print(f"{prompt:<16}{model:<28}{label:<19}{len(group):>5}{sum(r['applied'] == 1 for r in group):>8}"
               f"{mean(rates['db']):>7}{mean(rates['std']):>7}{mean(rates['des']):>7}{regr:>6}{viol:>7}")
     print("\nDB, STD: share of satisfied rules on the new or changed objects; DES: share of adopted conflicting rules;"
           "\nregr: rules that were fine before and are violated now; viol.: violations of DB and STD in the whole schema.")
@@ -790,6 +790,7 @@ def main() -> None:
             workspace = run_dir / "workspace"
             row: dict[str, Any] = {k: run.get(k, "") for k in ("batch_id", "run_index", "label", "prompt", "status", "run_dir")}
             row["model"] = run.get("model_effective") or run.get("model_requested", "")
+            row["harness"] = run.get("harness") or "opencode"
             if not workspace.is_dir():
                 continue
             schema, error = build_schema(pg, f"run{n}", read_sources(workspace))

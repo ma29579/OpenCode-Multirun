@@ -4,7 +4,7 @@ Guidance for AI coding agents (OpenCode, Claude Code, etc.) that work **on this 
 
 ## Project overview
 
-A pilot study for a master's thesis: how does an agent handle a prompt and the knowledge that is provided to it? The tool `tools/opencode_multirun.py` runs a prompt several times with OpenCode and records quantitative metrics; `tools/schema_lint.py` checks the schema the agent produced against the rules. The agent under test works on `sample_project/` (a PostgreSQL schema with deliberate violations) and gets the guidelines from `sample_guidelines/` in eight scenarios (baseline, AGENTS.md, files, specs, MCP, hybrid, swapped hybrid, split specs). See `README.md` for the study design.
+A pilot study for a master's thesis: how does an agent handle a prompt and the knowledge that is provided to it? The tool `tools/opencode_multirun.py` runs a prompt several times with OpenCode and records quantitative metrics; `tools/schema_lint.py` checks the schema the agent produced against the rules. The agent under test works on `sample_project/` (a PostgreSQL schema with deliberate violations) and gets the guidelines from `sample_guidelines/` in nine scenarios (baseline, AGENTS.md, files, specs, MCP, hybrid, split specs, and two scenarios that place the contradicting rules in the files or in MCP). See `README.md` for the study design.
 
 | Path | Purpose |
 |---|---|
@@ -15,7 +15,7 @@ A pilot study for a master's thesis: how does an agent handle a prompt and the k
 | `study/scenarios/` | **generated** by `study/build-scenarios.py` from `sample_guidelines/`; never edit by hand |
 | `sample_project/` | object of the study: `db/migrations/*.sql`, `db/scripts/*.sql` |
 | `sample_guidelines/` | the knowledge given to the agent under test |
-| `docker-compose.yml`, `.env.example` | the three docs MCP servers (Ollama and OpenCode run on the host) |
+| `docker-compose.yml`, `.env.example` | the four docs MCP servers (Ollama and OpenCode run on the host) |
 | `study/setup-ollama.sh` | pulls the embedding model into the local Ollama |
 
 ## Keep the study valid
@@ -28,6 +28,7 @@ A pilot study for a master's thesis: how does an agent handle a prompt and the k
 
 ## The tool (`tools/opencode_multirun.py`)
 
+- Two harnesses: OpenCode (default) and Claude Code (`--harness claude`). Everything harness specific lives in `prepare_claude_workspace`, `build_command`, `claude_env` and `parse_claude_events`; scenarios, linter and evaluations must stay harness neutral.
 - Python ≥ 3.9, **standard library only**, POSIX only (process groups via `os.killpg`).
 - Flow: `parse_args` → `main` → per run `execute_run` (copy workspace, add files, git baseline, run `opencode run --format json`, evaluate stream and export, collect changes, append CSV row).
 - Every run works in its own copy of the working directory. The original must never be changed.

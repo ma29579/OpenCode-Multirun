@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""OpenCode-Multirun: run one prompt several times with OpenCode and measure each run.
+"""OpenCode-Multirun: run one prompt several times with a coding agent and measure each run.
 
 Every run works on its own copy of the working directory, so the runs are independent and
-the original is never changed. OpenCode runs with an empty configuration directory, so that
-the personal configuration of the user does not influence the study. For each run the script records quantitative metrics
+the original is never changed. The agent runs without the personal configuration of the user, so that
+it does not influence the study. Harnesses: OpenCode (default) and Claude Code (--harness claude). For each run the script records quantitative metrics
 (tokens, cost, duration, tool calls, size of the changes) in a CSV file and keeps the raw
 data (event stream, answer text, patch of the changes) for later analysis.
 
@@ -12,7 +12,7 @@ Example:
       -m github-copilot/claude-sonnet-5 -w sample_project --label base \\
       --add sample_guidelines/database-guidelines.md:guidelines/
 
-Requirements: Python >= 3.9 (standard library only), opencode 2.x, git. Linux, macOS or WSL2.
+Requirements: Python >= 3.9 (standard library only), opencode 2.x or claude (Claude Code), git. Linux, macOS or WSL2.
 """
 
 from __future__ import annotations
@@ -34,19 +34,19 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, NoReturn, Optional, Sequence
 
-__version__ = "4.3.1"
+__version__ = "5.0.0"
 
 # Columns of the result file. Changing them breaks existing result files, so a new study
 # should start with a new output directory.
 CSV_COLUMNS = (
-    "batch_id", "run_index", "label", "prompt", "model_requested", "model_effective",
+    "batch_id", "run_index", "label", "harness", "prompt", "model_requested", "model_effective",
     "start_utc", "end_utc", "duration_s", "status", "exit_code", "error_message",
     "steps", "tokens_total", "tokens_input", "tokens_output", "tokens_reasoning",
     "tokens_cache_read", "tokens_cache_write", "cost_usd", "accounting_source",
     "tool_calls", "tool_errors", "mcp_calls", "tools_used", "output_chars",
     "sql_files_read", "guideline_files_read", "knowledge_accessed",
     "files_changed", "lines_added", "lines_deleted",
-    "session_id", "prompt_sha256", "opencode_version", "run_dir",
+    "session_id", "prompt_sha256", "harness_version", "run_dir",
 )
 
 STATUS_OK, STATUS_ERROR, STATUS_TIMEOUT = "ok", "error", "timeout"
@@ -60,6 +60,12 @@ HELPER_TIMEOUT_SEC = 120    # version query, export, git
 ERROR_MESSAGE_CHARS = 300
 MCP_CALL = re.compile(r"\btools\.(\w+)\.(\w+)")
 GUIDELINE_FILE = re.compile(r"^(?:\./)?(?:guidelines|specs)/.+\.md$")
+MCP_TOOL = re.compile(r"^mcp__(\w+?)__(.+)$")   # Claude Code names MCP tools mcp__<server>__<tool>
+HARNESSES = ("opencode", "claude")
+# Variables that a surrounding Claude Code session sets for its own children; they must not reach the agent
+# under test. The credentials of the user (ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN, CLAUDE_CONFIG_DIR) stay.
+CLAUDE_KEEP = {"CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CONFIG_DIR"}
+CLAUDE_STRIP_PREFIXES = ("CLAUDE", "ANTHROPIC_BASE_URL", "AI_AGENT", "BAGGAGE")
 
 
 # --------------------------------------------------------------------------- helpers
@@ -106,6 +112,16 @@ def env_for(cwd: Path, config_home: Optional[Path] = None) -> dict[str, str]:
     env["PWD"] = str(cwd)
     if config_home is not None:
         env["XDG_CONFIG_HOME"] = str(config_home)
+    return env
+
+
+def claude_env(cwd: Path) -> dict[str, str]:
+    """Environment for Claude Code in `cwd`: without the variables of a surrounding Claude Code session
+    and without automatic memory, so that nothing but the workspace influences the agent."""
+    env = {k: v for k, v in os.environ.items()
+           if k in CLAUDE_KEEP or not k.startswith(CLAUDE_STRIP_PREFIXES)}
+    env["PWD"] = str(cwd)
+    env["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] = "1"
     return env
 
 
@@ -224,6 +240,71 @@ def parse_events(path: Path) -> StreamStats:
     return st
 
 
+def parse_claude_events(path: Path) -> tuple[StreamStats, str]:
+    """Evaluate the output of "claude -p --output-format stream-json --verbose". Returns the statistics
+    and the model that answered. The final "result" event carries the totals of the run."""
+    st = StreamStats()
+    model = ""
+    steps: dict[str, dict] = {}     # assistant messages by id (a message can be repeated per content block)
+    result: dict = {}
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return st, model
+    for line in lines:
+        try:
+            ev = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(ev, dict):
+            continue
+        if not st.session_id and isinstance(ev.get("session_id"), str):
+            st.session_id = ev["session_id"]
+        kind, message = ev.get("type"), as_dict(ev.get("message"))
+        if kind == "system" and ev.get("subtype") == "init":
+            model = str(ev.get("model") or "")
+        elif kind == "assistant" and message.get("model") != "<synthetic>":
+            steps[str(message.get("id") or len(steps))] = message
+            for block in message.get("content") or []:
+                block = as_dict(block)
+                if block.get("type") != "tool_use":
+                    continue
+                st.tool_calls += 1
+                name, tool_input = str(block.get("name") or ""), as_dict(block.get("input"))
+                mcp = MCP_TOOL.match(name)
+                if mcp:
+                    st.mcp_calls += 1
+                    st.tools_used.add(f"{mcp.group(1)}.{mcp.group(2)}")
+                elif name:
+                    st.tools_used.add(name)
+                if name == "Read" and isinstance(tool_input.get("file_path"), str):
+                    st.files_read.add(tool_input["file_path"])
+        elif kind == "user":
+            for block in message.get("content") or []:
+                block = as_dict(block)
+                if block.get("type") == "tool_result" and block.get("is_error"):
+                    st.tool_errors += 1
+        elif kind == "result":
+            result = ev
+    usage = as_dict(result.get("usage")) or {}
+    if not usage:  # aborted run: sum up what the assistant messages report
+        usage = {key: sum(num(as_dict(m.get("usage")).get(key)) for m in steps.values())
+                 for key in ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")}
+    t_in, t_out = int(num(usage.get("input_tokens"))), int(num(usage.get("output_tokens")))
+    c_read, c_write = int(num(usage.get("cache_read_input_tokens"))), int(num(usage.get("cache_creation_input_tokens")))
+    st.usage = Usage(steps=len(steps), tokens_total=t_in + t_out + c_read + c_write, tokens_input=t_in,
+                     tokens_output=t_out, tokens_cache_read=c_read, tokens_cache_write=c_write,
+                     cost_usd=float(num(result.get("total_cost_usd"))))
+    if result.get("is_error") or (result and result.get("subtype") not in (None, "success")):
+        st.error_events += 1
+        st.error_message = str(result.get("result") or result.get("subtype") or "")
+    if isinstance(result.get("result"), str) and not result.get("is_error"):
+        st.texts.append(result["result"])
+    if not model:
+        model = next(iter(as_dict(result.get("modelUsage"))), "")
+    return st, model
+
+
 def read_export(session_id: str, cwd: Path, target: Path,
                 env: dict[str, str]) -> tuple[Optional[Usage], str]:
     """Read the stored session with "opencode session export": it lists every model call of the
@@ -281,6 +362,42 @@ def create_workspace(workdir: Path, target: Path, adds: Sequence[tuple[Path, str
             shutil.copytree(src, out, symlinks=True, dirs_exist_ok=True)
         else:
             shutil.copy2(src, out)
+
+
+def prepare_claude_workspace(workspace: Path, run_dir: Path) -> Path:
+    """Translate the files of a scenario for Claude Code: the MCP servers of opencode.json go to an
+    mcp.json outside of the workspace, the rules file AGENTS.md becomes CLAUDE.md. Returns the mcp.json."""
+    servers: dict[str, dict] = {}
+    config = workspace / "opencode.json"
+    if config.exists():
+        try:
+            for name, server in as_dict(as_dict(json.loads(config.read_text(encoding="utf-8"))).get("mcp")).items():
+                if as_dict(server).get("url") and as_dict(server).get("enabled", True):
+                    servers[name] = {"type": "http", "url": server["url"]}
+        except json.JSONDecodeError:
+            pass
+        config.unlink()
+    if (workspace / "AGENTS.md").exists():
+        (workspace / "AGENTS.md").rename(workspace / "CLAUDE.md")
+    mcp_path = run_dir / "mcp.json"
+    mcp_path.write_text(json.dumps({"mcpServers": servers}, indent=2) + "\n", encoding="utf-8")
+    return mcp_path
+
+
+def build_command(args: argparse.Namespace, prompt: str, mcp_path: Optional[Path]) -> list[str]:
+    """The command of one run. A fixed prefix and "--" before the prompt keep a prompt that starts
+    with "-" from being read as an option."""
+    model = ["--model", args.model] if args.model else []
+    if args.harness == "claude":
+        # setting sources project,local: not the hooks, plugins and rules of the user; the web tools are denied
+        # like in the OpenCode configuration; the shell is not sandboxed (see README)
+        return (["claude", "-p", "--output-format", "stream-json", "--verbose", "--setting-sources", "project,local",
+                 "--strict-mcp-config", "--mcp-config", str(mcp_path), "--disallowedTools", "WebFetch", "WebSearch",
+                 "--permission-mode", "bypassPermissions", "--no-session-persistence", "--disable-slash-commands"]
+                + model + ["--", prompt])
+    # --standalone: a private server per run (the shared background service would ignore the isolated
+    # environment); --auto: approve permissions that the configuration does not deny.
+    return ["opencode", "run", "--standalone", "--auto", "--format", "json"] + model + ["--", prompt]
 
 
 def git(workspace: Path, *args: str) -> Optional[subprocess.CompletedProcess]:
@@ -366,10 +483,10 @@ class Batch:
     dir: Path
     csv_path: Path
     workdir: Path
-    cmd: list[str]
+    prompt: str
     prompt_name: str
     prompt_sha256: str
-    opencode_version: str
+    harness_version: str
 
 
 def execute_run(i: int, args: argparse.Namespace, batch: Batch) -> dict[str, Any]:
@@ -380,26 +497,37 @@ def execute_run(i: int, args: argparse.Namespace, batch: Batch) -> dict[str, Any
         create_workspace(batch.workdir, workspace, args.add_specs, args.out.resolve())
     except (OSError, shutil.Error) as e:
         fail(f"Could not create the workspace: {e}")
+    claude = args.harness == "claude"
+    mcp_path = prepare_claude_workspace(workspace, run_dir) if claude else None
     has_baseline = commit_baseline(workspace)
-    (run_dir / "command.txt").write_text(shlex.join(batch.cmd) + "\n", encoding="utf-8")
+    cmd = build_command(args, batch.prompt, mcp_path)
+    (run_dir / "command.txt").write_text(shlex.join(cmd) + "\n", encoding="utf-8")
     log(f"Run {i}/{args.runs} started …")
 
-    # An empty configuration directory outside of the workspace: OpenCode only sees what the study provides.
-    config_home = run_dir / "opencode-config"
-    config_home.mkdir()
-    env = env_for(workspace, config_home)
+    # OpenCode: an empty configuration directory outside of the workspace, so that it only sees what the
+    # study provides. Claude Code: a clean environment and no user settings (see build_command).
+    if claude:
+        env = claude_env(workspace)
+    else:
+        config_home = run_dir / "opencode-config"
+        config_home.mkdir()
+        env = env_for(workspace, config_home)
     start_iso, t0 = now_iso(), time.perf_counter()
-    exit_code, timed_out = run_process(batch.cmd, workspace, env, run_dir / "events.jsonl",
+    exit_code, timed_out = run_process(cmd, workspace, env, run_dir / "events.jsonl",
                                        run_dir / "stderr.log", TIMEOUT_SEC)
     duration = time.perf_counter() - t0
     end_iso = now_iso()
 
-    st = parse_events(run_dir / "events.jsonl")
-    usage, source, model_effective = st.usage, SOURCE_STREAM, ""
-    if st.session_id:
-        exported, model_effective = read_export(st.session_id, workspace, run_dir / "export.json", env)
-        if exported and exported.steps >= max(1, usage.steps):
-            usage, source = exported, SOURCE_EXPORT
+    if claude:
+        st, model_effective = parse_claude_events(run_dir / "events.jsonl")
+        usage, source = st.usage, SOURCE_STREAM
+    else:
+        st = parse_events(run_dir / "events.jsonl")
+        usage, source, model_effective = st.usage, SOURCE_STREAM, ""
+        if st.session_id:
+            exported, model_effective = read_export(st.session_id, workspace, run_dir / "export.json", env)
+            if exported and exported.steps >= max(1, usage.steps):
+                usage, source = exported, SOURCE_EXPORT
     if usage.steps == 0:
         source = SOURCE_NONE
 
@@ -422,7 +550,8 @@ def execute_run(i: int, args: argparse.Namespace, batch: Batch) -> dict[str, Any
     log(f"Run {i}/{args.runs}: {status} | {duration:.0f}s | {usage.tokens_total} tokens | "
         f"{st.tool_calls} tool calls | changes: {changes[1] or '?'}+/{changes[2] or '?'}-")
     return {
-        "batch_id": batch.id, "run_index": i, "label": args.label, "prompt": batch.prompt_name,
+        "batch_id": batch.id, "run_index": i, "label": args.label, "harness": args.harness,
+        "prompt": batch.prompt_name,
         "model_requested": args.model, "model_effective": model_effective,
         "start_utc": start_iso, "end_utc": end_iso, "duration_s": f"{duration:.1f}",
         "status": status, "exit_code": exit_code, "error_message": one_line(message, ERROR_MESSAGE_CHARS),
@@ -436,7 +565,7 @@ def execute_run(i: int, args: argparse.Namespace, batch: Batch) -> dict[str, Any
         "guideline_files_read": guideline_files, "knowledge_accessed": int(guideline_files > 0 or st.mcp_calls > 0),
         "files_changed": changes[0], "lines_added": changes[1], "lines_deleted": changes[2],
         "session_id": st.session_id, "prompt_sha256": batch.prompt_sha256,
-        "opencode_version": batch.opencode_version, "run_dir": str(run_dir),
+        "harness_version": batch.harness_version, "run_dir": str(run_dir),
     }
 
 
@@ -459,7 +588,7 @@ def append_row(path: Path, row: dict[str, Any]) -> None:
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         prog="opencode_multirun.py",
-        description="Run one prompt several times with OpenCode, each run in a fresh copy of "
+        description="Run one prompt several times with a coding agent, each run in a fresh copy of "
                     "the working directory, and record metrics as CSV.")
     p.add_argument("-f", "--prompt-file", type=Path, required=True, help="file with the prompt")
     p.add_argument("-n", "--runs", type=int, default=1, help="number of runs (default: 1)")
@@ -470,6 +599,8 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
                    help="copy a file or directory into every workspace (repeatable); DEST is relative "
                         "to the workspace, with a trailing '/' it names the target directory")
     p.add_argument("--label", default="", help="name of the experimental condition")
+    p.add_argument("--harness", choices=HARNESSES, default="opencode",
+                   help="the coding agent: opencode (default) or claude (Claude Code)")
     p.add_argument("-o", "--out", type=Path, default=Path("results"),
                    help="output directory (default: results)")
     args = p.parse_args(argv)
@@ -483,8 +614,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     args = parse_args(argv)
     if os.name != "posix":
         fail("Only POSIX systems are supported (Linux, macOS, WSL2).")
-    if not shutil.which("opencode"):
-        fail("opencode not found in PATH.")
+    program = "claude" if args.harness == "claude" else "opencode"
+    if not shutil.which(program):
+        fail(f"{program} not found in PATH.")
     if not args.workdir.is_dir():
         fail(f"Working directory does not exist: {args.workdir}")
     try:
@@ -494,19 +626,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if not prompt.strip():
         fail("The prompt is empty.")
 
-    # A fixed prefix + "--" before the prompt keeps a prompt that starts with "-" from being read as an option.
-    # --standalone: a private server per run (the shared background service would ignore the
-    # isolated environment); --auto: approve permissions that the configuration does not deny.
-    cmd = (["opencode", "run", "--standalone", "--auto", "--format", "json"]
-           + (["--model", args.model] if args.model else []) + ["--", prompt])
-    version = run_quiet(["opencode", "--version"])
+    version = run_quiet([program, "--version"])
     out = args.out.resolve()
     batch_id = f"{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{os.getpid()}"
-    batch = Batch(batch_id, out / batch_id, out / "runs.csv", args.workdir.resolve(), cmd,
+    batch = Batch(batch_id, out / batch_id, out / "runs.csv", args.workdir.resolve(), prompt,
                   args.prompt_file.stem, hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
                   (version.stdout.strip().splitlines() or [""])[0] if version else "")
     out.mkdir(parents=True, exist_ok=True)
-    log(f"Batch {batch_id}: {args.runs} run(s), label '{args.label}', model '{args.model or 'default'}'")
+    log(f"Batch {batch_id}: {args.runs} run(s), label '{args.label}', harness '{args.harness}', "
+        f"model '{args.model or 'default'}'")
     log(f"Results: {batch.csv_path}  |  raw data: {batch.dir}")
 
     ok = 0

@@ -70,7 +70,7 @@ def main() -> None:
             for row in csv.DictReader(fh):
                 if row["applied"] != "1" or row["prompt"] == "review-schema":
                     continue
-                key = (row["prompt"], row["model"].split("/")[-1], row["label"])
+                key = (row["prompt"], f"{row.get('harness') or 'opencode'}/{row['model'].split('/')[-1]}", row["label"])
                 for metric in METRICS:
                     if row[metric] != "":
                         groups[key][metric].append(float(row[metric]))
