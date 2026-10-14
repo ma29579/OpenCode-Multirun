@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Indexes the guidelines into the four docs MCP servers (scenarios "d-mcp-server", "e-mcp-and-specs",
-# "h-target-mcp-conflict-specs" and "i-conflict-mcp-target-specs").
+# "g-target-mcp-conflict-specs" and "h-conflict-mcp-target-specs").
 # Needs the stack from docker-compose.yml and the scenarios from study/build-scenarios.py.
 set -euo pipefail
 cd "$(dirname "$0")/.."

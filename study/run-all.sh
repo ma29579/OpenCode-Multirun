@@ -16,7 +16,7 @@ cd "$(dirname "$0")/.."
 runs=${1:-3}
 export OUT=results/study-$(date +%Y%m%d-%H%M%S)   # a new directory for every study
 models=${MODELS:-github-copilot/claude-sonnet-5 github-copilot/gpt-5.5}
-scenarios=${SCENARIOS:-baseline a-agents-md b-guideline-files c-spec-files d-mcp-server e-mcp-and-specs g-split-spec-files h-target-mcp-conflict-specs i-conflict-mcp-target-specs}
+scenarios=${SCENARIOS:-baseline a-agents-md b-guideline-files c-spec-files d-mcp-server e-mcp-and-specs f-split-spec-files g-target-mcp-conflict-specs h-conflict-mcp-target-specs}
 prompts=${PROMPTS:-add-tables add-animals fix-feed-table urgent-fix review-schema}
 
 python3 study/build-scenarios.py >/dev/null
@@ -26,8 +26,8 @@ for scenario in $scenarios; do
   case "$scenario" in
     d-mcp-server)    port=${DOCS_MCP_PORT:-6281} ;;
     e-mcp-and-specs) port=${DOCS_MCP_STATIC_PORT:-6282} ;;
-    h-target-mcp-conflict-specs) port=${DOCS_MCP_TARGET_PORT:-6283} ;;
-    i-conflict-mcp-target-specs) port=${DOCS_MCP_CONFLICT_PORT:-6284} ;;
+    g-target-mcp-conflict-specs) port=${DOCS_MCP_TARGET_PORT:-6283} ;;
+    h-conflict-mcp-target-specs) port=${DOCS_MCP_CONFLICT_PORT:-6284} ;;
     *) continue ;;
   esac
   if ! curl -s -o /dev/null -m 5 "http://localhost:$port/"; then

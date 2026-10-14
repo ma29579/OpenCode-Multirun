@@ -10,9 +10,9 @@
 #   c-spec-files      rules grouped by requirement as specs in specs/
 #   d-mcp-server      all guidelines through the docs MCP server
 #   e-mcp-and-specs   general guidelines through the MCP server, project-specific rules as specs in specs/
-#   g-split-spec-files        all rules as specs, separated into specs/general and specs/project
-#   h-target-mcp-conflict-specs   DB and STD through the MCP server, the contradicting DES rules as specs
-#   i-conflict-mcp-target-specs   the contradicting DES rules through the MCP server, DB and STD as specs
+#   f-split-spec-files        all rules as specs, separated into specs/general and specs/project
+#   g-target-mcp-conflict-specs   DB and STD through the MCP server, the contradicting DES rules as specs
+#   h-conflict-mcp-target-specs   the contradicting DES rules through the MCP server, DB and STD as specs
 #
 # Prompts: the file names in study/prompts/ without ".md".
 # Environment: MODEL (default github-copilot/claude-sonnet-5), HARNESS (opencode, default, or claude);
@@ -31,7 +31,7 @@ harness=${HARNESS:-opencode}
 [ -d study/scenarios ] || python3 study/build-scenarios.py >/dev/null
 overlay=study/scenarios/$scenario
 if [ ! -d "$overlay" ] || [[ "$scenario" == mcp-* ]]; then
-  echo "unknown scenario: $scenario (baseline, a-agents-md, b-guideline-files, c-spec-files, d-mcp-server, e-mcp-and-specs, g-split-spec-files, h-target-mcp-conflict-specs, i-conflict-mcp-target-specs)" >&2
+  echo "unknown scenario: $scenario (baseline, a-agents-md, b-guideline-files, c-spec-files, d-mcp-server, e-mcp-and-specs, f-split-spec-files, g-target-mcp-conflict-specs, h-conflict-mcp-target-specs)" >&2
   exit 2
 fi
 

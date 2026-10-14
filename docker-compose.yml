@@ -6,8 +6,8 @@
 #
 # docs-mcp          scenario d-mcp-server: all guidelines            (port 6281)
 # docs-mcp-static   scenario e-mcp-and-specs: general guidelines only (port 6282)
-# docs-mcp-target   scenario h-target-mcp-conflict-specs: DB and STD rules only (port 6283)
-# docs-mcp-conflict scenario i-conflict-mcp-target-specs: DES rules only (port 6284)
+# docs-mcp-target   scenario g-target-mcp-conflict-specs: DB and STD rules only (port 6283)
+# docs-mcp-conflict scenario h-conflict-mcp-target-specs: DES rules only (port 6284)
 # The servers are separate so that the agent of one scenario cannot see the knowledge of the other.
 #
 # Usage:
