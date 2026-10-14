@@ -54,7 +54,7 @@ SOURCE_STREAM, SOURCE_EXPORT, SOURCE_NONE = "stream", "export", "none"
 
 EXIT_TIMEOUT = 124          # same as GNU "timeout"
 EXIT_NOT_STARTED = 127      # the program could not be started (shell convention)
-DEFAULT_TIMEOUT_SEC = 1800  # protects against runs that hang, e.g. on a permission prompt
+TIMEOUT_SEC = 1800  # protects against runs that hang, e.g. on a permission prompt
 KILL_GRACE_SEC = 10         # wait between SIGTERM and SIGKILL
 HELPER_TIMEOUT_SEC = 120    # version query, export, git
 ERROR_MESSAGE_CHARS = 300
@@ -388,7 +388,7 @@ def execute_run(i: int, args: argparse.Namespace, batch: Batch) -> dict[str, Any
     env = env_for(workspace, config_home)
     start_iso, t0 = now_iso(), time.perf_counter()
     exit_code, timed_out = run_process(batch.cmd, workspace, env, run_dir / "events.jsonl",
-                                       run_dir / "stderr.log", args.timeout)
+                                       run_dir / "stderr.log", TIMEOUT_SEC)
     duration = time.perf_counter() - t0
     end_iso = now_iso()
 
@@ -458,7 +458,6 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         prog="opencode_multirun.py",
         description="Run one prompt several times with OpenCode, each run in a fresh copy of "
                     "the working directory, and record metrics as CSV.")
-    p.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     p.add_argument("-f", "--prompt-file", type=Path, required=True, help="file with the prompt")
     p.add_argument("-n", "--runs", type=int, default=1, help="number of runs (default: 1)")
     p.add_argument("-m", "--model", default="", help="model, e.g. github-copilot/claude-sonnet-5")
@@ -470,11 +469,9 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     p.add_argument("--label", default="", help="name of the experimental condition")
     p.add_argument("-o", "--out", type=Path, default=Path("results"),
                    help="output directory (default: results)")
-    p.add_argument("-t", "--timeout", type=int, default=DEFAULT_TIMEOUT_SEC,
-                   help=f"time limit per run in seconds (default: {DEFAULT_TIMEOUT_SEC})")
     args = p.parse_args(argv)
-    if args.runs < 1 or args.timeout < 1:
-        p.error("--runs and --timeout must be at least 1")
+    if args.runs < 1:
+        p.error("--runs must be at least 1")
     args.add_specs = [parse_add(s) for s in args.add]
     return args
 

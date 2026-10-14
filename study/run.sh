@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Runs one scenario of the pilot study with one prompt.
 #
-#   study/run.sh <scenario> <prompt> [runs] [extra options for opencode_multirun.py]
+#   study/run.sh <scenario> <prompt> [runs]
 #
 # Scenarios (what knowledge the agent gets, see study/build-scenarios.py):
 #   baseline          no knowledge
@@ -12,7 +12,7 @@
 #   e-mcp-and-specs   static rules through the MCP server, dynamic rules as specs in specs/
 #
 # Prompts: the file names in study/prompts/ without ".md".
-# Environment: MODEL (default github-copilot/claude-sonnet-5), OUT (output directory, default results).
+# Environment: MODEL (default github-copilot/claude-sonnet-5); OUT is set by study/run-all.sh (default results).
 # The MCP scenarios need the servers: docker compose up -d && study/index-knowledge.sh
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -37,4 +37,4 @@ for entry in "$overlay"/*; do
 done
 
 exec python3 tools/opencode_multirun.py -f "study/prompts/$prompt.md" -n "$runs" -m "$model" \
-  -w sample_project --label "$scenario" -o "$out" "${adds[@]}" "${@:4}"
+  -w sample_project --label "$scenario" -o "$out" "${adds[@]}"

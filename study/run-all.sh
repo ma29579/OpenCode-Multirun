@@ -5,7 +5,6 @@
 #
 # Environment:
 #   MODEL     model of the agent (default github-copilot/claude-sonnet-5)
-#   OUT       output directory (default results/study-<timestamp>)
 #   SCENARIOS scenarios to run (default: all six)
 #   PROMPTS   prompts to run (default: add-tables fix-feed-table review-schema)
 #
@@ -14,7 +13,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 runs=${1:-3}
-export OUT=${OUT:-results/study-$(date +%Y%m%d-%H%M%S)}
+export OUT=results/study-$(date +%Y%m%d-%H%M%S)   # a new directory for every study
 scenarios=${SCENARIOS:-baseline a-agents-md b-guideline-files c-spec-files d-mcp-server e-mcp-and-specs}
 prompts=${PROMPTS:-add-tables fix-feed-table review-schema}
 

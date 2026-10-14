@@ -81,7 +81,7 @@ This runs 6 scenarios × 3 prompts × `runs` agent runs (54 with the default), w
 
 ```bash
 SCENARIOS="baseline b-guideline-files" PROMPTS=add-tables study/run-all.sh 5
-MODEL=github-copilot/claude-haiku-5.5 OUT=results/haiku study/run-all.sh 3
+MODEL=github-copilot/claude-haiku-5.5 study/run-all.sh 3
 ```
 
 One combination:
@@ -90,7 +90,7 @@ One combination:
 study/run.sh <scenario> <prompt> [runs]        # e.g. study/run.sh c-spec-files add-tables 3
 ```
 
-Each run works on its **own copy** of `sample_project/`, so runs are independent and the original is never changed. The files of the scenario are added to the copy. Everything after the third argument is passed to the tool, e.g. `-t 3600` for a longer time limit. To use the tool directly, see `tools/opencode_multirun.py --help`.
+Each run works on its **own copy** of `sample_project/`, so runs are independent and the original is never changed. The files of the scenario are added to the copy. To use the tool directly, see `tools/opencode_multirun.py --help`. A run is stopped after 30 minutes (`TIMEOUT_SEC` in the tool).
 
 | Option of the tool | Meaning |
 |---|---|
@@ -101,7 +101,6 @@ Each run works on its **own copy** of `sample_project/`, so runs are independent
 | `--add SRC[:DEST]` | copy a file or directory into every workspace; with a trailing `/` DEST is a directory |
 | `--label` | name of the scenario |
 | `-o`, `--out` | output directory (default `results`) |
-| `-t`, `--timeout` | time limit per run in seconds (default 1800) |
 
 ## Results
 

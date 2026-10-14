@@ -35,6 +35,9 @@ from typing import Any, Callable, Optional
 
 __version__ = "1.0.0"
 
+ROOT = Path(__file__).resolve().parent.parent
+BASELINE = ROOT / "sample_project"        # the unchanged sample project
+GUIDELINES = ROOT / "sample_guidelines"   # the linter must cover the same rules
 CONTAINER = "opencode-multirun-lint"
 IMAGE = "postgres:17-alpine"
 SOURCES = ("DB", "STD", "DES")
@@ -920,23 +923,18 @@ def summarize(rows: list[dict[str, Any]]) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Check the results of a study against the 50 rules.")
     parser.add_argument("results", type=Path, help="results directory with runs.csv")
-    parser.add_argument("--baseline", type=Path, default=Path("sample_project"), help="the unchanged sample project")
-    parser.add_argument("--guidelines", type=Path, default=Path("sample_guidelines"),
-                        help="guidelines; the linter checks that it covers the same rules")
-    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     args = parser.parse_args()
 
     runs_csv = args.results / "runs.csv"
     if not runs_csv.exists():
         sys.exit(f"error: {runs_csv} not found")
-    if args.guidelines.is_dir():
-        verify_rule_coverage(args.guidelines)
+    verify_rule_coverage(GUIDELINES)
     with runs_csv.open(newline="", encoding="utf-8") as fh:
         runs = list(csv.DictReader(fh))
 
     rows: list[dict[str, Any]] = []
     with Postgres() as pg:
-        base, error = build_schema(pg, "baseline", read_sources(args.baseline))
+        base, error = build_schema(pg, "baseline", read_sources(BASELINE))
         if base is None:
             sys.exit(f"error: the baseline does not apply: {error}")
         base_items = run_rules(base)
