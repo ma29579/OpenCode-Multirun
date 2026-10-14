@@ -33,6 +33,7 @@ In `c-spec-files` and `e-mcp-and-specs` the rules are grouped by topic (capabili
 |---|---|
 | `tools/opencode_multirun.py` | the measuring tool: runs a prompt n times and records metrics |
 | `tools/schema_lint.py` | the linter: checks the schema that an agent produced against the rules |
+| `tools/analyze.py` | statistics: mean, bootstrap interval and permutation test against the baseline |
 | `study/prompts/` | the tasks |
 | `study/build-scenarios.py` | builds the scenarios in `study/scenarios/` from the guidelines |
 | `study/run-all.sh` | runs the whole study: every scenario with every prompt, then the linter |
@@ -164,7 +165,15 @@ For every run it applies the migrations of the workspace (`db/migrations/V*.sql`
 
 For `urgent-fix`, which changes one spot of an existing table, only the checks that are new or whose result changed are scored (`NARROW_PROMPTS` in the linter); otherwise the agent would be held responsible for the existing columns of the table. `<run_dir>/lint.json` lists every single check. The linter measures only runs that change the schema (all prompts except `review-schema`); the review is evaluated from `response.txt`. Several checks are heuristics, for example which column holds an enumeration or a quantity (names and types); they are validated against the ground truth: on the unchanged sample project the linter finds the violations listed there. Rules about reasoning (for example "natural keys are unique") are checked for the cases that can be decided from the schema. The linter and the guidelines must have the same rule IDs; the linter stops otherwise.
 
-Example analysis:
+Statistics:
+
+```bash
+python3 tools/analyze.py results/study-A results/study-B      # one or more studies with a lint.csv
+```
+
+For every task, model and scenario it prints the mean of `db_rate`, `std_rate` and `des_rate` with a 95% bootstrap interval and the Holm-corrected p-value of a permutation test against `baseline` (`*` for p < 0.05), and writes `analysis.csv`. With few runs no p-value can be small (two against two runs give at best p = 0.33), so use it to see effect sizes and to plan the number of runs.
+
+Example analysis with pandas:
 
 ```python
 import pandas as pd
