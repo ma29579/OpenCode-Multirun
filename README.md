@@ -128,7 +128,7 @@ results/
 
 In OpenCode 2 an agent calls MCP tools from code with the tool `execute` (`tools.<server>.<tool>(…)`). `mcp_calls` counts these references in the code of all `execute` calls, and `tools_used` lists them as `<server>.<tool>` (e.g. `docs.search_docs`). A call in a loop is counted once, so the value tells whether and how the MCP server was used, not how often it was queried. `knowledge_accessed` shows whether the agent used the provided knowledge at all; the content it got and applied has to be evaluated from `response.txt`. `sql_files_read` shows how much of the schema the agent looked at (the sample project has 8 SQL files).
 
-Tokens and cost are taken from the stored session (`opencode session export`, `accounting_source = export`); if the export is not available, the event stream is used (`stream`). Only the model calls of the agent are counted, not the generation of the session title. `cost_usd` is the price that OpenCode calculates from the token counts; it is not what a subscription such as GitHub Copilot bills (see Notes). With local models it is `0`.
+Tokens and cost are taken from the stored session (`opencode session export`, `accounting_source = export`); if the export is not available, the event stream is used (`stream`). Only the model calls of the agent are counted, not the generation of the session title. `cost_usd` is the price that OpenCode calculates from the token counts; it is not what a subscription such as GitHub Copilot bills (see Notes).
 
 Example analysis:
 

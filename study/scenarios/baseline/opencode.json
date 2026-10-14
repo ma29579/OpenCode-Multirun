@@ -8,22 +8,5 @@
     "websearch": "deny",
     "question": "deny",
     "external_directory": "deny"
-  },
-  "provider": {
-    "ollama": {
-      "npm": "@ai-sdk/openai-compatible",
-      "name": "Ollama (local)",
-      "options": {
-        "baseURL": "http://localhost:11434/v1"
-      },
-      "models": {
-        "qwen3.5:9b": {
-          "name": "Qwen 3.5 9B"
-        },
-        "gemma4:26b": {
-          "name": "Gemma 4 26B"
-        }
-      }
-    }
   }
 }
