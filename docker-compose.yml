@@ -1,11 +1,11 @@
 # Knowledge servers of the pilot study: two docs-mcp-servers provide the guidelines to the agent
-# through MCP (scenarios "d-mcp" and "e-hybrid"). Its embeddings are computed by the local Ollama of the host.
+# through MCP (scenarios "d-mcp-server" and "e-mcp-and-specs"). Its embeddings are computed by the local Ollama of the host.
 #
 # Prerequisites: Ollama runs on the host (default port 11434) and has the embedding model,
 # see study/setup-ollama.sh.
 #
-# docs-mcp          scenario d-mcp: all guidelines            (port 6281)
-# docs-mcp-static   scenario e-hybrid: static rules only      (port 6282)
+# docs-mcp          scenario d-mcp-server: all guidelines            (port 6281)
+# docs-mcp-static   scenario e-mcp-and-specs: static rules only      (port 6282)
 # The servers are separate so that the agent of one scenario cannot see the knowledge of the other.
 #
 # Usage:

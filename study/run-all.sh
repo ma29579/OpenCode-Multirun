@@ -15,7 +15,7 @@ cd "$(dirname "$0")/.."
 
 runs=${1:-3}
 export OUT=${OUT:-results/study-$(date +%Y%m%d-%H%M%S)}
-scenarios=${SCENARIOS:-baseline a-agents b-files c-specs d-mcp e-hybrid}
+scenarios=${SCENARIOS:-baseline a-agents-md b-guideline-files c-spec-files d-mcp-server e-mcp-and-specs}
 prompts=${PROMPTS:-add-tables fix-feed-table review-schema}
 
 python3 study/build-scenarios.py >/dev/null
@@ -23,8 +23,8 @@ python3 study/build-scenarios.py >/dev/null
 # the MCP scenarios are useless without their servers
 for scenario in $scenarios; do
   case "$scenario" in
-    d-mcp)    port=${DOCS_MCP_PORT:-6281} ;;
-    e-hybrid) port=${DOCS_MCP_STATIC_PORT:-6282} ;;
+    d-mcp-server)    port=${DOCS_MCP_PORT:-6281} ;;
+    e-mcp-and-specs) port=${DOCS_MCP_STATIC_PORT:-6282} ;;
     *) continue ;;
   esac
   if ! curl -s -o /dev/null -m 5 "http://localhost:$port/"; then

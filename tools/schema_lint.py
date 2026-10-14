@@ -905,13 +905,13 @@ def summarize(rows: list[dict[str, Any]]) -> None:
     def mean(values: list[float]) -> str:
         return f"{statistics.mean(values):.2f}" if values else "-"
 
-    print(f"\n{'prompt':<16}{'scenario':<10}{'runs':>5}{'applied':>8}{'DB':>7}{'STD':>7}{'DES':>7}{'regr':>6}{'viol.':>7}")
+    print(f"\n{'prompt':<16}{'scenario':<19}{'runs':>5}{'applied':>8}{'DB':>7}{'STD':>7}{'DES':>7}{'regr':>6}{'viol.':>7}")
     for (prompt, label), group in sorted(groups.items()):
         applied = [r for r in group if r["applied"] == 1 and r["touched"]]
         rates = {k: [float(r[f"{k}_rate"]) for r in applied if r[f"{k}_rate"] != ""] for k in ("db", "std", "des")}
         regr = mean([float(r["regressions"]) for r in applied])
         viol = mean([float(r["violations_result"]) for r in applied])
-        print(f"{prompt:<16}{label:<10}{len(group):>5}{sum(r['applied'] == 1 for r in group):>8}"
+        print(f"{prompt:<16}{label:<19}{len(group):>5}{sum(r['applied'] == 1 for r in group):>8}"
               f"{mean(rates['db']):>7}{mean(rates['std']):>7}{mean(rates['des']):>7}{regr:>6}{viol:>7}")
     print("\nDB, STD: share of satisfied rules on the new or changed objects; DES: share of adopted conflicting rules;"
           "\nregr: rules that were fine before and are violated now; viol.: violations of DB and STD in the whole schema.")
@@ -954,7 +954,7 @@ def main() -> None:
             row.update(result)
             (run_dir / "lint.json").write_text(json.dumps({"error": error, "items": items}, indent=1), encoding="utf-8")
             rows.append(row)
-            print(f"{run['label']:<10} {run['prompt']:<16} run {run['run_index']:>3}: "
+            print(f"{run['label']:<19} {run['prompt']:<16} run {run['run_index']:>3}: "
                   f"{'applied' if schema else 'FAILED: ' + error}")
 
     out = args.results / "lint.csv"

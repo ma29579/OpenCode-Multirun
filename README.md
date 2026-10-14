@@ -19,13 +19,13 @@ The 50 rules come from three guideline documents in `sample_guidelines/`: `DB` (
 | Scenario | The agent gets |
 |---|---|
 | `baseline` | no knowledge, only the task |
-| `a-agents` | all guidelines inside `AGENTS.md` (in the context of every request) |
-| `b-files` | the three guideline files in `guidelines/`; `AGENTS.md` points to them |
-| `c-specs` | the rules grouped by requirement as specs in `specs/<capability>/spec.md` (spec-driven development); `AGENTS.md` points to them |
-| `d-mcp` | the three guideline files through the `docs` MCP server (no files) |
-| `e-hybrid` | **static** rules (capabilities `naming`, `data-types`; 25 rules) through the MCP server, **dynamic** rules (`integrity`, `modeling`, `database-objects`, `migrations`; 25 rules) as specs in `specs/` |
+| `a-agents-md` | all guidelines inside `AGENTS.md` (in the context of every request) |
+| `b-guideline-files` | the three guideline files in `guidelines/`; `AGENTS.md` points to them |
+| `c-spec-files` | the rules grouped by requirement as specs in `specs/<capability>/spec.md` (spec-driven development); `AGENTS.md` points to them |
+| `d-mcp-server` | the three guideline files through the `docs` MCP server (no files) |
+| `e-mcp-and-specs` | **static** rules (capabilities `naming`, `data-types`; 25 rules) through the MCP server, **dynamic** rules (`integrity`, `modeling`, `database-objects`, `migrations`; 25 rules) as specs in `specs/` |
 
-In `c-specs` and `e-hybrid` the rules are grouped by topic, not by source document, so contradicting rules stand next to each other. Static rules are conventions that rarely change (how things are written and typed); dynamic rules are requirements for structure and process that depend on the task and live next to the code. The assignment of the rules is in `study/build-scenarios.py`.
+In `c-spec-files` and `e-mcp-and-specs` the rules are grouped by topic, not by source document, so contradicting rules stand next to each other. Static rules are conventions that rarely change (how things are written and typed); dynamic rules are requirements for structure and process that depend on the task and live next to the code. The assignment of the rules is in `study/build-scenarios.py`.
 
 ## Repository layout
 
@@ -43,7 +43,7 @@ In `c-specs` and `e-hybrid` the rules are grouped by topic, not by source docume
 | `sample_project/` | the database project the agent works on |
 | `sample_guidelines/` | the guidelines (the source of all scenarios) |
 | `study/setup-ollama.sh` | pulls the embedding model into the local Ollama (MCP scenarios) |
-| `docker-compose.yml` | the two docs MCP servers (scenarios `d-mcp`, `e-hybrid`) |
+| `docker-compose.yml` | the two docs MCP servers (scenarios `d-mcp-server`, `e-mcp-and-specs`) |
 | `results/` | output of the runs (not in git) |
 
 `study/ground-truth/` must never be copied into a workspace or shown to an agent.
@@ -69,7 +69,7 @@ docker compose up -d         # MCP servers: all rules on :6281, static rules on 
 study/index-knowledge.sh     # builds the scenarios and indexes the rules into both servers
 ```
 
-The default model is `github-copilot/claude-sonnet-5`. Use another model with `MODEL=<provider>/<model> study/run-all.sh …` (list: `opencode models`). Ports and the embedding model can be changed in `.env` (see `.env.example`); run `study/build-scenarios.py` again afterwards, it writes the ports into the scenarios. The servers reach Ollama through `host.docker.internal`. They are separate, so that the agent of `d-mcp` cannot see the static subset and the agent of `e-hybrid` cannot see all rules.
+The default model is `github-copilot/claude-sonnet-5`. Use another model with `MODEL=<provider>/<model> study/run-all.sh …` (list: `opencode models`). Ports and the embedding model can be changed in `.env` (see `.env.example`); run `study/build-scenarios.py` again afterwards, it writes the ports into the scenarios. The servers reach Ollama through `host.docker.internal`. They are separate, so that the agent of `d-mcp-server` cannot see the static subset and the agent of `e-mcp-and-specs` cannot see all rules.
 
 ## Run the study
 
@@ -80,14 +80,14 @@ study/run-all.sh [runs]      # default 3 runs per combination
 This runs 6 scenarios × 3 prompts × `runs` agent runs (54 with the default), writes everything to `results/study-<timestamp>/` and finishes with the linter. Check the quota of your provider first (see Notes). Restrict the study with environment variables:
 
 ```bash
-SCENARIOS="baseline b-files" PROMPTS=add-tables study/run-all.sh 5
+SCENARIOS="baseline b-guideline-files" PROMPTS=add-tables study/run-all.sh 5
 MODEL=github-copilot/claude-haiku-5.5 OUT=results/haiku study/run-all.sh 3
 ```
 
 One combination:
 
 ```bash
-study/run.sh <scenario> <prompt> [runs]        # e.g. study/run.sh c-specs add-tables 3
+study/run.sh <scenario> <prompt> [runs]        # e.g. study/run.sh c-spec-files add-tables 3
 ```
 
 Each run works on its **own copy** of `sample_project/`, so runs are independent and the original is never changed. The files of the scenario are added to the copy. Everything after the third argument is passed to the tool, e.g. `-t 3600` for a longer time limit. To use the tool directly, see `tools/opencode_multirun.py --help`.
@@ -124,7 +124,7 @@ results/
 | Time and status | `start_utc`, `end_utc`, `duration_s`, `status` (`ok`, `error`, `timeout`), `exit_code`, `error_message` |
 | Tokens and cost | `steps`, `tokens_total`, `tokens_input`, `tokens_output`, `tokens_reasoning`, `tokens_cache_read`, `tokens_cache_write`, `cost_usd`, `accounting_source` |
 | Behavior | `tool_calls`, `tool_errors`, `mcp_calls`, `tools_used` (`;`-separated), `output_chars` |
-| Use of the knowledge | `sql_files_read` (how many SQL files the agent read), `guideline_files_read` (how many files in `guidelines/` or `specs/` it read), `knowledge_accessed` (`1` if it read such a file or called the MCP server, otherwise `0`; always `0` in `a-agents` and `baseline`, because `AGENTS.md` is part of the context of the agent anyway) |
+| Use of the knowledge | `sql_files_read` (how many SQL files the agent read), `guideline_files_read` (how many files in `guidelines/` or `specs/` it read), `knowledge_accessed` (`1` if it read such a file or called the MCP server, otherwise `0`; always `0` in `a-agents-md` and `baseline`, because `AGENTS.md` is part of the context of the agent anyway) |
 | Changes | `files_changed`, `lines_added`, `lines_deleted` |
 
 In OpenCode 2 an agent calls MCP tools from code with the tool `execute` (`tools.<server>.<tool>(…)`). `mcp_calls` counts these references in the code of all `execute` calls, and `tools_used` lists them as `<server>.<tool>` (e.g. `docs.search_docs`). A call in a loop is counted once, so the value tells whether and how the MCP server was used, not how often it was queried. `knowledge_accessed` shows whether the agent used the provided knowledge at all; the content it got and applied has to be evaluated from `response.txt`. `sql_files_read` shows how much of the schema the agent looked at (the sample project has 8 SQL files).

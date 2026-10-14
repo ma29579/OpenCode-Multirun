@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Indexes the guidelines into the two docs MCP servers (scenarios "d-mcp" and "e-hybrid").
+# Indexes the guidelines into the two docs MCP servers (scenarios "d-mcp-server" and "e-mcp-and-specs").
 # Needs the stack from docker-compose.yml and the scenarios from study/build-scenarios.py.
 set -euo pipefail
 cd "$(dirname "$0")/.."

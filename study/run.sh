@@ -4,12 +4,12 @@
 #   study/run.sh <scenario> <prompt> [runs] [extra options for opencode_multirun.py]
 #
 # Scenarios (what knowledge the agent gets, see study/build-scenarios.py):
-#   baseline  no knowledge
-#   a-agents  all guidelines inside AGENTS.md
-#   b-files   guideline files in guidelines/
-#   c-specs   rules grouped by requirement as specs in specs/
-#   d-mcp     all guidelines through the docs MCP server
-#   e-hybrid  static rules through the MCP server, dynamic rules as specs in specs/
+#   baseline          no knowledge
+#   a-agents-md       all guidelines inside AGENTS.md
+#   b-guideline-files guideline files in guidelines/
+#   c-spec-files      rules grouped by requirement as specs in specs/
+#   d-mcp-server      all guidelines through the docs MCP server
+#   e-mcp-and-specs   static rules through the MCP server, dynamic rules as specs in specs/
 #
 # Prompts: the file names in study/prompts/ without ".md".
 # Environment: MODEL (default github-copilot/claude-sonnet-5), OUT (output directory, default results).
@@ -26,7 +26,7 @@ out=${OUT:-results}
 [ -d study/scenarios ] || python3 study/build-scenarios.py >/dev/null
 overlay=study/scenarios/$scenario
 if [ ! -d "$overlay" ] || [ "$scenario" = mcp-static ]; then
-  echo "unknown scenario: $scenario (baseline, a-agents, b-files, c-specs, d-mcp, e-hybrid)" >&2
+  echo "unknown scenario: $scenario (baseline, a-agents-md, b-guideline-files, c-spec-files, d-mcp-server, e-mcp-and-specs)" >&2
   exit 2
 fi
 
