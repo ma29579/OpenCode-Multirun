@@ -1,0 +1,19 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "github-copilot/claude-sonnet-5",
+  "autoupdate": false,
+  "share": "disabled",
+  "permission": {
+    "webfetch": "deny",
+    "websearch": "deny",
+    "question": "deny",
+    "external_directory": "deny"
+  },
+  "mcp": {
+    "docs": {
+      "type": "remote",
+      "url": "http://localhost:6283/mcp",
+      "enabled": true
+    }
+  }
+}

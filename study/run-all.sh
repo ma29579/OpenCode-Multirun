@@ -5,17 +5,17 @@
 #
 # Environment:
 #   MODELS    models of the agent (default: github-copilot/claude-sonnet-5 github-copilot/gpt-5.5)
-#   SCENARIOS scenarios to run (default: all six)
+#   SCENARIOS scenarios to run (default: all eight)
 #   PROMPTS   prompts to run (default: add-tables add-animals fix-feed-table urgent-fix review-schema)
 #
-# 2 models x 6 scenarios x 5 prompts x 3 runs = 180 agent runs. Check the quota of your model provider first.
+# 2 models x 8 scenarios x 5 prompts x 3 runs = 240 agent runs. Check the quota of your model provider first.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 runs=${1:-3}
 export OUT=results/study-$(date +%Y%m%d-%H%M%S)   # a new directory for every study
 models=${MODELS:-github-copilot/claude-sonnet-5 github-copilot/gpt-5.5}
-scenarios=${SCENARIOS:-baseline a-agents-md b-guideline-files c-spec-files d-mcp-server e-mcp-and-specs}
+scenarios=${SCENARIOS:-baseline a-agents-md b-guideline-files c-spec-files d-mcp-server e-mcp-and-specs f-swapped-mcp-and-specs g-split-spec-files}
 prompts=${PROMPTS:-add-tables add-animals fix-feed-table urgent-fix review-schema}
 
 python3 study/build-scenarios.py >/dev/null
@@ -25,6 +25,7 @@ for scenario in $scenarios; do
   case "$scenario" in
     d-mcp-server)    port=${DOCS_MCP_PORT:-6281} ;;
     e-mcp-and-specs) port=${DOCS_MCP_STATIC_PORT:-6282} ;;
+    f-swapped-mcp-and-specs) port=${DOCS_MCP_SWAPPED_PORT:-6283} ;;
     *) continue ;;
   esac
   if ! curl -s -o /dev/null -m 5 "http://localhost:$port/"; then

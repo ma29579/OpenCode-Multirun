@@ -4,17 +4,18 @@ Guidance for AI coding agents (OpenCode, Claude Code, etc.) that work **on this 
 
 ## Project overview
 
-A pilot study for a master's thesis: how does an agent handle a prompt and the knowledge that is provided to it? The tool `tools/opencode_multirun.py` runs a prompt several times with OpenCode and records quantitative metrics; `tools/schema_lint.py` checks the schema the agent produced against the rules. The agent under test works on `sample_project/` (a PostgreSQL schema with deliberate violations) and gets the guidelines from `sample_guidelines/` in six scenarios (baseline, AGENTS.md, files, specs, MCP, hybrid). See `README.md` for the study design.
+A pilot study for a master's thesis: how does an agent handle a prompt and the knowledge that is provided to it? The tool `tools/opencode_multirun.py` runs a prompt several times with OpenCode and records quantitative metrics; `tools/schema_lint.py` checks the schema the agent produced against the rules. The agent under test works on `sample_project/` (a PostgreSQL schema with deliberate violations) and gets the guidelines from `sample_guidelines/` in eight scenarios (baseline, AGENTS.md, files, specs, MCP, hybrid, swapped hybrid, split specs). See `README.md` for the study design.
 
 | Path | Purpose |
 |---|---|
 | `tools/opencode_multirun.py` | the measuring tool (single file, standard library only) |
 | `tools/schema_lint.py` | the linter (standard library, needs Docker for a throw-away PostgreSQL) |
+| `tools/analyze.py`, `tools/validate_lint.py`, `tools/judge_responses.py` | statistics, manual validation of the linter, judge of the answers about conflicts (standard library) |
 | `study/` | prompts, configuration, scenario builder and runners, ground truth |
 | `study/scenarios/` | **generated** by `study/build-scenarios.py` from `sample_guidelines/`; never edit by hand |
 | `sample_project/` | object of the study: `db/migrations/*.sql`, `db/scripts/*.sql` |
 | `sample_guidelines/` | the knowledge given to the agent under test |
-| `docker-compose.yml`, `.env.example` | the two docs MCP servers (Ollama and OpenCode run on the host) |
+| `docker-compose.yml`, `.env.example` | the three docs MCP servers (Ollama and OpenCode run on the host) |
 | `study/setup-ollama.sh` | pulls the embedding model into the local Ollama |
 
 ## Keep the study valid
@@ -42,7 +43,7 @@ A pilot study for a master's thesis: how does an agent handle a prompt and the k
 ## Commands
 
 ```bash
-python3 -m py_compile tools/opencode_multirun.py tools/schema_lint.py study/build-scenarios.py   # syntax check
+python3 -m py_compile tools/*.py study/build-scenarios.py   # syntax check
 python3 study/build-scenarios.py                      # rebuild study/scenarios/ after a change of the guidelines
 docker compose config -q                              # validate the compose file
 bash -n study/run.sh study/run-all.sh study/index-knowledge.sh   # validate the shell scripts

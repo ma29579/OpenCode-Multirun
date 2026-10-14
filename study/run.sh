@@ -9,7 +9,9 @@
 #   b-guideline-files guideline files in guidelines/
 #   c-spec-files      rules grouped by requirement as specs in specs/
 #   d-mcp-server      all guidelines through the docs MCP server
-#   e-mcp-and-specs   static rules through the MCP server, dynamic rules as specs in specs/
+#   e-mcp-and-specs   general guidelines through the MCP server, project-specific rules as specs in specs/
+#   f-swapped-mcp-and-specs   project-specific rules through the MCP server, general guidelines as specs
+#   g-split-spec-files        all rules as specs, separated into specs/general and specs/project
 #
 # Prompts: the file names in study/prompts/ without ".md".
 # Environment: MODEL (default github-copilot/claude-sonnet-5); OUT is set by study/run-all.sh (default results).
@@ -25,8 +27,8 @@ out=${OUT:-results}
 
 [ -d study/scenarios ] || python3 study/build-scenarios.py >/dev/null
 overlay=study/scenarios/$scenario
-if [ ! -d "$overlay" ] || [ "$scenario" = mcp-static ]; then
-  echo "unknown scenario: $scenario (baseline, a-agents-md, b-guideline-files, c-spec-files, d-mcp-server, e-mcp-and-specs)" >&2
+if [ ! -d "$overlay" ] || [[ "$scenario" == mcp-* ]]; then
+  echo "unknown scenario: $scenario (baseline, a-agents-md, b-guideline-files, c-spec-files, d-mcp-server, e-mcp-and-specs, f-swapped-mcp-and-specs, g-split-spec-files)" >&2
   exit 2
 fi
 

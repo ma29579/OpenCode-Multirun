@@ -9,7 +9,7 @@ The agent ([OpenCode](https://opencode.ai) with a language model) gets a task on
 | | |
 |---|---|
 | **Task** (prompt) | `add-tables` (customer tables), `add-animals` (poultry tables), `fix-feed-table` (rework a table and its data), `urgent-fix` (make a column optional on production), `review-schema` (find violations) |
-| **Knowledge** (scenario) | six ways to provide the same 32 rules, see below |
+| **Knowledge** (scenario) | eight ways to provide the same 32 rules, see below |
 | **Object** | a PostgreSQL schema (`sample_project/`) that deliberately violates the rules |
 | **Repetitions** | several runs per combination, because the output of an agent varies |
 | **Models** | two models from different vendors, the same for all scenarios: `github-copilot/claude-sonnet-5` and `github-copilot/gpt-5.5` (list: `opencode models`) |
@@ -24,6 +24,10 @@ The 32 rules come from three guideline documents in `sample_guidelines/`: `DB` (
 | `c-spec-files` | the rules grouped by requirement as specs in `specs/<capability>/spec.md` (spec-driven development); `AGENTS.md` points to them |
 | `d-mcp-server` | the three guideline files through the `docs` MCP server (no files) |
 | `e-mcp-and-specs` | the **general** guidelines (`DB`, 12 rules: static knowledge) through the MCP server, the **project-specific** rules (`STD` and `DES`, 20 rules: dynamic knowledge) as specs in `specs/` |
+| `f-swapped-mcp-and-specs` | the other way round: the project-specific rules through the MCP server, the general guidelines as specs |
+| `g-split-spec-files` | all rules as specs without an MCP server, separated by source: `specs/general/` and `specs/project/` |
+
+`e`, `f` and `g` separate the effect of the channel from the effect of the separation: in `e` the general rules and the contradicting rules reach the agent through different channels; `f` swaps the channels; `g` keeps the separation but uses one channel (files). Compare them with `c-spec-files`, which has the same specs without separation.
 
 In `c-spec-files` and `e-mcp-and-specs` the rules are grouped by topic (capability), not by source document, so contradicting rules stand next to each other (in `e-mcp-and-specs` the general guidelines are in the MCP server and the contradicting rules in the specs). Static knowledge is general and rarely changes; dynamic knowledge is specific to the project and lives next to the code. The assignment of the rules to capabilities is in `study/build-scenarios.py`.
 
@@ -33,18 +37,20 @@ In `c-spec-files` and `e-mcp-and-specs` the rules are grouped by topic (capabili
 |---|---|
 | `tools/opencode_multirun.py` | the measuring tool: runs a prompt n times and records metrics |
 | `tools/schema_lint.py` | the linter: checks the schema that an agent produced against the rules |
+| `tools/validate_lint.py` | blind manual rating of a sample of linter checks, agreement and Cohen's kappa |
+| `tools/judge_responses.py` | second model call: what the agents say about conflicting rules |
 | `tools/analyze.py` | statistics: mean, bootstrap interval and permutation test against the baseline |
 | `study/prompts/` | the tasks |
 | `study/build-scenarios.py` | builds the scenarios in `study/scenarios/` from the guidelines |
 | `study/run-all.sh` | runs the whole study: every scenario with every prompt, then the linter |
 | `study/run.sh` | runs one scenario with one prompt |
-| `study/index-knowledge.sh` | indexes the guidelines into the two MCP servers |
+| `study/index-knowledge.sh` | indexes the guidelines into the three MCP servers |
 | `study/config/opencode.json` | OpenCode configuration that every scenario starts from |
 | `study/ground-truth/violations.md` | every built-in violation and the conflicts between the guidelines |
 | `sample_project/` | the database project the agent works on |
 | `sample_guidelines/` | the guidelines (the source of all scenarios) |
 | `study/setup-ollama.sh` | pulls the embedding model into the local Ollama (MCP scenarios) |
-| `docker-compose.yml` | the two docs MCP servers (scenarios `d-mcp-server`, `e-mcp-and-specs`) |
+| `docker-compose.yml` | the three docs MCP servers (scenarios `d-mcp-server`, `e-mcp-and-specs`, `f-swapped-mcp-and-specs`) |
 | `results/` | output of the runs (not in git) |
 
 `study/ground-truth/` must never be copied into a workspace or shown to an agent.
@@ -66,7 +72,7 @@ Linux, macOS or WSL2.
 ```bash
 opencode auth login          # sign in to the provider of the model (once)
 study/setup-ollama.sh        # pulls the embedding model into the local Ollama
-docker compose up -d         # MCP servers: all rules on :6281, general guidelines only on :6282
+docker compose up -d         # MCP servers: all rules on :6281, general guidelines only on :6282, project-specific rules only on :6283
 study/index-knowledge.sh     # builds the scenarios and indexes the rules into both servers
 ```
 
@@ -78,7 +84,7 @@ The default models are `github-copilot/claude-sonnet-5` and `github-copilot/gpt-
 study/run-all.sh [runs]      # default 3 runs per combination
 ```
 
-This runs 2 models × 6 scenarios × 5 prompts × `runs` agent runs (180 with the default), writes everything to `results/study-<timestamp>/` and finishes with the linter. Check the quota of your provider first (see Notes). Restrict the study with environment variables:
+This runs 2 models × 8 scenarios × 5 prompts × `runs` agent runs (240 with the default), writes everything to `results/study-<timestamp>/` and finishes with the linter. Check the quota of your provider first (see Notes). Restrict the study with environment variables:
 
 ```bash
 SCENARIOS="baseline b-guideline-files" PROMPTS=add-tables study/run-all.sh 5
@@ -172,6 +178,23 @@ python3 tools/analyze.py results/study-A results/study-B      # one or more stud
 ```
 
 For every task, model and scenario it prints the mean of `db_rate`, `std_rate` and `des_rate` with a 95% bootstrap interval and the Holm-corrected p-value of a permutation test against `baseline` (`*` for p < 0.05), and writes `analysis.csv`. With few runs no p-value can be small (two against two runs give at best p = 0.33), so use it to see effect sizes and to plan the number of runs.
+
+### Check the linter by hand
+
+```bash
+python3 tools/validate_lint.py sample results/study-A [results/study-B ...]   # draws the checks
+python3 tools/validate_lint.py agree  results/study-A                         # after the rating
+```
+
+`sample` writes about 190 checks (up to three satisfied and three violated ones per rule) to `rating-sample.csv` without the verdict of the linter, and the verdicts with model and scenario to `rating-key.csv`. One or two people open the workspace and the patch of every row and fill `rater_1` (and `rater_2`) with `1` (rule satisfied for the object), `0` (violated) or `-` (does not apply), without looking at the key. `agree` prints the agreement and Cohen's kappa between linter and raters and between the raters, and lists the disagreements per rule. Report these numbers together with the results.
+
+### What the agents say about conflicts
+
+```bash
+python3 tools/judge_responses.py results/study-A
+```
+
+A second model (`JUDGE_MODEL`, default `github-copilot/gemini-3.8-flash`, a different family than the agents) reads the task, the final answer, the patch and the rules, without tools, scenario or model name, and answers: does the agent name a contradiction between rules (`conflict_mentioned`, `conflicts`), does it explain its decision (`decision_explained`), which side does it say it follows (`stated_side`) and does it claim that it followed all rules (`claims_full_compliance`). The result is `judge.csv` and a `judge.json` in every run directory (a repeated call does not judge a run twice). Together with the linter this shows whether an agent follows a convention knowingly or by chance. The judge is a model as well: check a sample of its verdicts by hand, and do not use the same model for the judge and for an agent.
 
 Example analysis with pandas:
 
