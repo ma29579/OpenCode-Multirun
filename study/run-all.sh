@@ -5,7 +5,7 @@
 #
 # Environment:
 #   MODELS    models of the agent (default: github-copilot/claude-sonnet-5 github-copilot/gpt-5.5);
-#             "claude:<model>" runs the model with Claude Code instead of OpenCode, e.g. claude:claude-sonnet-5
+#             "copilot:<model>" runs the model with the GitHub Copilot CLI instead of OpenCode, e.g. copilot:claude-sonnet-5
 #   SCENARIOS scenarios to run (default: all nine)
 #   PROMPTS   prompts to run (default: add-tables add-animals fix-feed-table urgent-fix review-schema)
 #
@@ -42,7 +42,7 @@ for prompt in $prompts; do
   for scenario in $scenarios; do
     for entry in $models; do
       case "$entry" in
-        claude:*)   harness=claude;   model=${entry#claude:} ;;
+        copilot:*)  harness=copilot;  model=${entry#copilot:} ;;
         opencode:*) harness=opencode; model=${entry#opencode:} ;;
         *)          harness=opencode; model=$entry ;;
       esac

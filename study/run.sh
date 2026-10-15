@@ -15,7 +15,7 @@
 #   h-conflict-mcp-target-specs   the contradicting DES rules through the MCP server, DB and STD as specs
 #
 # Prompts: the file names in study/prompts/ without ".md".
-# Environment: MODEL (default github-copilot/claude-sonnet-5), HARNESS (opencode, default, or claude);
+# Environment: MODEL (default github-copilot/claude-sonnet-5), HARNESS (opencode, default, or copilot);
 # OUT is set by study/run-all.sh (default results).
 # The MCP scenarios need the servers: docker compose up -d && study/index-knowledge.sh
 set -euo pipefail

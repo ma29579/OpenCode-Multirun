@@ -28,7 +28,7 @@ A pilot study for a master's thesis: how does an agent handle a prompt and the k
 
 ## The tool (`tools/opencode_multirun.py`)
 
-- Two harnesses: OpenCode (default) and Claude Code (`--harness claude`). Everything harness specific lives in `prepare_claude_workspace`, `build_command`, `claude_env` and `parse_claude_events`; scenarios, linter and evaluations must stay harness neutral.
+- Two harnesses: OpenCode (default) and the GitHub Copilot CLI (`--harness copilot`). Everything harness specific lives in `prepare_copilot_workspace`, `build_command`, `copilot_env` and `parse_copilot_events`; scenarios, linter and evaluations must stay harness neutral.
 - Python ≥ 3.9, **standard library only**, POSIX only (process groups via `os.killpg`).
 - Flow: `parse_args` → `main` → per run `execute_run` (copy workspace, add files, git baseline, run `opencode run --format json`, evaluate stream and export, collect changes, append CSV row).
 - Every run works in its own copy of the working directory. The original must never be changed.

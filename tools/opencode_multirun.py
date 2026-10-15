@@ -3,7 +3,7 @@
 
 Every run works on its own copy of the working directory, so the runs are independent and
 the original is never changed. The agent runs without the personal configuration of the user, so that
-it does not influence the study. Harnesses: OpenCode (default) and Claude Code (--harness claude). For each run the script records quantitative metrics
+it does not influence the study. Harnesses: OpenCode (default) and the GitHub Copilot CLI (--harness copilot). For each run the script records quantitative metrics
 (tokens, cost, duration, tool calls, size of the changes) in a CSV file and keeps the raw
 data (event stream, answer text, patch of the changes) for later analysis.
 
@@ -12,7 +12,7 @@ Example:
       -m github-copilot/claude-sonnet-5 -w sample_project --label base \\
       --add sample_guidelines/database-guidelines.md:guidelines/
 
-Requirements: Python >= 3.9 (standard library only), opencode 2.x or claude (Claude Code), git. Linux, macOS or WSL2.
+Requirements: Python >= 3.9 (standard library only), opencode 2.x or copilot (GitHub Copilot CLI), git. Linux, macOS or WSL2.
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, NoReturn, Optional, Sequence
 
-__version__ = "5.0.0"
+__version__ = "6.0.0"
 
 # Columns of the result file. Changing them breaks existing result files, so a new study
 # should start with a new output directory.
@@ -42,7 +42,7 @@ CSV_COLUMNS = (
     "batch_id", "run_index", "label", "harness", "prompt", "model_requested", "model_effective",
     "start_utc", "end_utc", "duration_s", "status", "exit_code", "error_message",
     "steps", "tokens_total", "tokens_input", "tokens_output", "tokens_reasoning",
-    "tokens_cache_read", "tokens_cache_write", "cost_usd", "accounting_source",
+    "tokens_cache_read", "tokens_cache_write", "cost_usd", "premium_requests", "accounting_source",
     "tool_calls", "tool_errors", "mcp_calls", "tools_used", "output_chars",
     "sql_files_read", "guideline_files_read", "knowledge_accessed",
     "files_changed", "lines_added", "lines_deleted",
@@ -50,7 +50,7 @@ CSV_COLUMNS = (
 )
 
 STATUS_OK, STATUS_ERROR, STATUS_TIMEOUT = "ok", "error", "timeout"
-SOURCE_STREAM, SOURCE_EXPORT, SOURCE_NONE = "stream", "export", "none"
+SOURCE_STREAM, SOURCE_EXPORT, SOURCE_USAGE, SOURCE_NONE = "stream", "export", "usage", "none"
 
 EXIT_TIMEOUT = 124          # same as GNU "timeout"
 EXIT_NOT_STARTED = 127      # the program could not be started (shell convention)
@@ -60,12 +60,9 @@ HELPER_TIMEOUT_SEC = 120    # version query, export, git
 ERROR_MESSAGE_CHARS = 300
 MCP_CALL = re.compile(r"\btools\.(\w+)\.(\w+)")
 GUIDELINE_FILE = re.compile(r"^(?:\./)?(?:guidelines|specs)/.+\.md$")
-MCP_TOOL = re.compile(r"^mcp__(\w+?)__(.+)$")   # Claude Code names MCP tools mcp__<server>__<tool>
-HARNESSES = ("opencode", "claude")
-# Variables that a surrounding Claude Code session sets for its own children; they must not reach the agent
-# under test. The credentials of the user (ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN, CLAUDE_CONFIG_DIR) stay.
-CLAUDE_KEEP = {"CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CONFIG_DIR"}
-CLAUDE_STRIP_PREFIXES = ("CLAUDE", "ANTHROPIC_BASE_URL", "AI_AGENT", "BAGGAGE")
+HARNESSES = ("opencode", "copilot")
+# Commands whose file arguments the Copilot CLI agent reads (it often reads files through the shell).
+READ_COMMANDS = {"cat", "head", "tail", "less", "more", "nl", "grep", "rg", "sed", "awk", "bat"}
 
 
 # --------------------------------------------------------------------------- helpers
@@ -115,13 +112,13 @@ def env_for(cwd: Path, config_home: Optional[Path] = None) -> dict[str, str]:
     return env
 
 
-def claude_env(cwd: Path) -> dict[str, str]:
-    """Environment for Claude Code in `cwd`: without the variables of a surrounding Claude Code session
-    and without automatic memory, so that nothing but the workspace influences the agent."""
-    env = {k: v for k, v in os.environ.items()
-           if k in CLAUDE_KEEP or not k.startswith(CLAUDE_STRIP_PREFIXES)}
+def copilot_env(cwd: Path, copilot_home: Path) -> dict[str, str]:
+    """Environment for the Copilot CLI in `cwd`. COPILOT_HOME is an empty directory, so that the personal
+    configuration, instructions, MCP servers and history of the user do not reach the agent (the login
+    is not stored there and stays valid). Other COPILOT_* settings are removed; the token variables stay."""
+    env = {k: v for k, v in os.environ.items() if k == "COPILOT_GITHUB_TOKEN" or not k.startswith("COPILOT_")}
     env["PWD"] = str(cwd)
-    env["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] = "1"
+    env["COPILOT_HOME"] = str(copilot_home)
     return env
 
 
@@ -148,6 +145,7 @@ class Usage:
     tokens_cache_read: int = 0
     tokens_cache_write: int = 0
     cost_usd: float = 0.0
+    premium_requests: float = 0.0     # GitHub Copilot CLI: what the run costs in premium requests
 
     @classmethod
     def from_parts(cls, parts: Sequence[dict]) -> Usage:
@@ -240,13 +238,11 @@ def parse_events(path: Path) -> StreamStats:
     return st
 
 
-def parse_claude_events(path: Path) -> tuple[StreamStats, str]:
-    """Evaluate the output of "claude -p --output-format stream-json --verbose". Returns the statistics
-    and the model that answered. The final "result" event carries the totals of the run."""
+def parse_copilot_events(path: Path, usage_path: Path) -> tuple[StreamStats, str]:
+    """Evaluate "copilot --output-format json" (one JSON object per line; many events are streaming
+    deltas that are skipped) and the file of --usage-output-file. Returns the statistics and the model."""
     st = StreamStats()
-    model = ""
-    steps: dict[str, dict] = {}     # assistant messages by id (a message can be repeated per content block)
-    result: dict = {}
+    model, messages = "", 0
     try:
         lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
@@ -258,50 +254,44 @@ def parse_claude_events(path: Path) -> tuple[StreamStats, str]:
             continue
         if not isinstance(ev, dict):
             continue
-        if not st.session_id and isinstance(ev.get("session_id"), str):
-            st.session_id = ev["session_id"]
-        kind, message = ev.get("type"), as_dict(ev.get("message"))
-        if kind == "system" and ev.get("subtype") == "init":
-            model = str(ev.get("model") or "")
-        elif kind == "assistant" and message.get("model") != "<synthetic>":
-            steps[str(message.get("id") or len(steps))] = message
-            for block in message.get("content") or []:
-                block = as_dict(block)
-                if block.get("type") != "tool_use":
-                    continue
-                st.tool_calls += 1
-                name, tool_input = str(block.get("name") or ""), as_dict(block.get("input"))
-                mcp = MCP_TOOL.match(name)
-                if mcp:
-                    st.mcp_calls += 1
-                    st.tools_used.add(f"{mcp.group(1)}.{mcp.group(2)}")
-                elif name:
-                    st.tools_used.add(name)
-                if name == "Read" and isinstance(tool_input.get("file_path"), str):
-                    st.files_read.add(tool_input["file_path"])
-        elif kind == "user":
-            for block in message.get("content") or []:
-                block = as_dict(block)
-                if block.get("type") == "tool_result" and block.get("is_error"):
-                    st.tool_errors += 1
-        elif kind == "result":
-            result = ev
-    usage = as_dict(result.get("usage")) or {}
-    if not usage:  # aborted run: sum up what the assistant messages report
-        usage = {key: sum(num(as_dict(m.get("usage")).get(key)) for m in steps.values())
-                 for key in ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")}
-    t_in, t_out = int(num(usage.get("input_tokens"))), int(num(usage.get("output_tokens")))
-    c_read, c_write = int(num(usage.get("cache_read_input_tokens"))), int(num(usage.get("cache_creation_input_tokens")))
-    st.usage = Usage(steps=len(steps), tokens_total=t_in + t_out + c_read + c_write, tokens_input=t_in,
-                     tokens_output=t_out, tokens_cache_read=c_read, tokens_cache_write=c_write,
-                     cost_usd=float(num(result.get("total_cost_usd"))))
-    if result.get("is_error") or (result and result.get("subtype") not in (None, "success")):
-        st.error_events += 1
-        st.error_message = str(result.get("result") or result.get("subtype") or "")
-    if isinstance(result.get("result"), str) and not result.get("is_error"):
-        st.texts.append(result["result"])
-    if not model:
-        model = next(iter(as_dict(result.get("modelUsage"))), "")
+        kind, data = str(ev.get("type") or ""), as_dict(ev.get("data"))
+        if kind == "result":
+            st.session_id = str(ev.get("sessionId") or st.session_id)
+        elif kind == "assistant.message":
+            messages += 1
+            model = model or str(data.get("model") or "")
+            if data.get("content"):
+                st.texts.append(str(data["content"]))
+        elif kind == "tool.execution_start":
+            st.tool_calls += 1
+            name, args = str(data.get("toolName") or ""), as_dict(data.get("arguments"))
+            if data.get("mcpServerName"):   # MCP tools carry their server and tool name
+                st.mcp_calls += 1
+                st.tools_used.add(f"{data['mcpServerName']}.{data.get('mcpToolName')}")
+            elif name:
+                st.tools_used.add(name)
+            if name in ("view", "read", "read_file") and isinstance(args.get("path") or args.get("file_path"), str):
+                st.files_read.add(str(args.get("path") or args.get("file_path")))
+            command = str(args.get("command") or "").split()
+            if name == "bash" and command and command[0] in READ_COMMANDS:
+                st.files_read.update(str(p) for p in as_dict(data.get("shellToolInfo")).get("possiblePaths") or [])
+        elif kind == "tool.execution_complete" and data.get("success") is False:
+            st.tool_errors += 1
+        elif kind == "error" or kind.endswith(".error"):
+            st.error_events += 1
+            st.error_message = st.error_message or str(data.get("message") or ev.get("message") or kind)
+    try:
+        usage = as_dict(json.loads(usage_path.read_text(encoding="utf-8")))
+    except (OSError, json.JSONDecodeError):
+        usage = {}
+    tokens = as_dict(usage.get("tokenDetails"))
+    count = lambda key: int(num(as_dict(tokens.get(key)).get("tokenCount")))
+    reasoning = sum(num(as_dict(as_dict(m).get("usage")).get("reasoningTokens"))
+                    for m in as_dict(usage.get("modelMetrics")).values())
+    t_in, t_out, c_read, c_write = count("input"), count("output"), count("cache_read"), count("cache_write")
+    st.usage = Usage(steps=messages, tokens_total=t_in + t_out + c_read + c_write, tokens_input=t_in,
+                     tokens_output=t_out, tokens_reasoning=int(reasoning), tokens_cache_read=c_read,
+                     tokens_cache_write=c_write, premium_requests=float(num(usage.get("totalPremiumRequestCost"))))
     return st, model
 
 
@@ -364,37 +354,33 @@ def create_workspace(workdir: Path, target: Path, adds: Sequence[tuple[Path, str
             shutil.copy2(src, out)
 
 
-def prepare_claude_workspace(workspace: Path, run_dir: Path) -> Path:
-    """Translate the files of a scenario for Claude Code: the MCP servers of opencode.json go to an
-    mcp.json outside of the workspace, the rules file AGENTS.md becomes CLAUDE.md. Returns the mcp.json."""
+def prepare_copilot_workspace(workspace: Path) -> str:
+    """Translate the files of a scenario for the Copilot CLI: it reads AGENTS.md itself; the MCP servers of
+    opencode.json become the JSON of --additional-mcp-config, and opencode.json is removed from the workspace."""
     servers: dict[str, dict] = {}
     config = workspace / "opencode.json"
     if config.exists():
         try:
             for name, server in as_dict(as_dict(json.loads(config.read_text(encoding="utf-8"))).get("mcp")).items():
                 if as_dict(server).get("url") and as_dict(server).get("enabled", True):
-                    servers[name] = {"type": "http", "url": server["url"]}
+                    servers[name] = {"type": "http", "url": server["url"], "tools": ["*"]}
         except json.JSONDecodeError:
             pass
         config.unlink()
-    if (workspace / "AGENTS.md").exists():
-        (workspace / "AGENTS.md").rename(workspace / "CLAUDE.md")
-    mcp_path = run_dir / "mcp.json"
-    mcp_path.write_text(json.dumps({"mcpServers": servers}, indent=2) + "\n", encoding="utf-8")
-    return mcp_path
+    return json.dumps({"mcpServers": servers})
 
 
-def build_command(args: argparse.Namespace, prompt: str, mcp_path: Optional[Path]) -> list[str]:
-    """The command of one run. A fixed prefix and "--" before the prompt keep a prompt that starts
-    with "-" from being read as an option."""
+def build_command(args: argparse.Namespace, prompt: str, mcp_config: str, usage_path: Path) -> list[str]:
+    """The command of one run. The prompt follows "--" (OpenCode) or is part of the option (Copilot CLI), so
+    that a prompt that starts with "-" is not read as an option."""
     model = ["--model", args.model] if args.model else []
-    if args.harness == "claude":
-        # setting sources project,local: not the hooks, plugins and rules of the user; the web tools are denied
-        # like in the OpenCode configuration; the shell is not sandboxed (see README)
-        return (["claude", "-p", "--output-format", "stream-json", "--verbose", "--setting-sources", "project,local",
-                 "--strict-mcp-config", "--mcp-config", str(mcp_path), "--disallowedTools", "WebFetch", "WebSearch",
-                 "--permission-mode", "bypassPermissions", "--no-session-persistence", "--disable-slash-commands"]
-                + model + ["--", prompt])
+    if args.harness == "copilot":
+        # no questions to the user, no updates, no built-in GitHub MCP servers, no URL access (like the denied
+        # web tools of OpenCode), no access to the temporary directory; the shell is not sandboxed (see README)
+        return (["copilot", f"--prompt={prompt}", "--output-format", "json", "--allow-all-tools", "--no-ask-user",
+                 "--no-auto-update", "--no-remote", "--disable-builtin-mcps", "--disallow-temp-dir",
+                 "--deny-tool", "url", "--additional-mcp-config", mcp_config, "--usage-output-file", str(usage_path)]
+                + model)
     # --standalone: a private server per run (the shared background service would ignore the isolated
     # environment); --auto: approve permissions that the configuration does not deny.
     return ["opencode", "run", "--standalone", "--auto", "--format", "json"] + model + ["--", prompt]
@@ -497,17 +483,19 @@ def execute_run(i: int, args: argparse.Namespace, batch: Batch) -> dict[str, Any
         create_workspace(batch.workdir, workspace, args.add_specs, args.out.resolve())
     except (OSError, shutil.Error) as e:
         fail(f"Could not create the workspace: {e}")
-    claude = args.harness == "claude"
-    mcp_path = prepare_claude_workspace(workspace, run_dir) if claude else None
+    copilot = args.harness == "copilot"
+    mcp_config = prepare_copilot_workspace(workspace) if copilot else ""
     has_baseline = commit_baseline(workspace)
-    cmd = build_command(args, batch.prompt, mcp_path)
+    usage_path = run_dir / "usage.json"
+    cmd = build_command(args, batch.prompt, mcp_config, usage_path)
     (run_dir / "command.txt").write_text(shlex.join(cmd) + "\n", encoding="utf-8")
     log(f"Run {i}/{args.runs} started …")
 
     # OpenCode: an empty configuration directory outside of the workspace, so that it only sees what the
-    # study provides. Claude Code: a clean environment and no user settings (see build_command).
-    if claude:
-        env = claude_env(workspace)
+    # study provides. Copilot CLI: an empty COPILOT_HOME for the same reason (see copilot_env).
+    if copilot:
+        (run_dir / "copilot-home").mkdir()
+        env = copilot_env(workspace, run_dir / "copilot-home")
     else:
         config_home = run_dir / "opencode-config"
         config_home.mkdir()
@@ -518,9 +506,9 @@ def execute_run(i: int, args: argparse.Namespace, batch: Batch) -> dict[str, Any
     duration = time.perf_counter() - t0
     end_iso = now_iso()
 
-    if claude:
-        st, model_effective = parse_claude_events(run_dir / "events.jsonl")
-        usage, source = st.usage, SOURCE_STREAM
+    if copilot:
+        st, model_effective = parse_copilot_events(run_dir / "events.jsonl", usage_path)
+        usage, source = st.usage, SOURCE_USAGE if usage_path.exists() else SOURCE_STREAM
     else:
         st = parse_events(run_dir / "events.jsonl")
         usage, source, model_effective = st.usage, SOURCE_STREAM, ""
@@ -558,7 +546,8 @@ def execute_run(i: int, args: argparse.Namespace, batch: Batch) -> dict[str, Any
         "steps": usage.steps, "tokens_total": usage.tokens_total, "tokens_input": usage.tokens_input,
         "tokens_output": usage.tokens_output, "tokens_reasoning": usage.tokens_reasoning,
         "tokens_cache_read": usage.tokens_cache_read, "tokens_cache_write": usage.tokens_cache_write,
-        "cost_usd": f"{usage.cost_usd:.6f}", "accounting_source": source,
+        "cost_usd": f"{usage.cost_usd:.6f}", "premium_requests": f"{usage.premium_requests:g}" if copilot else "",
+        "accounting_source": source,
         "tool_calls": st.tool_calls, "tool_errors": st.tool_errors, "mcp_calls": st.mcp_calls,
         "tools_used": ";".join(sorted(st.tools_used)), "output_chars": len(answer),
         "sql_files_read": sum(p.endswith(".sql") for p in st.files_read),
@@ -600,7 +589,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
                         "to the workspace, with a trailing '/' it names the target directory")
     p.add_argument("--label", default="", help="name of the experimental condition")
     p.add_argument("--harness", choices=HARNESSES, default="opencode",
-                   help="the coding agent: opencode (default) or claude (Claude Code)")
+                   help="the coding agent: opencode (default) or copilot (GitHub Copilot CLI)")
     p.add_argument("-o", "--out", type=Path, default=Path("results"),
                    help="output directory (default: results)")
     args = p.parse_args(argv)
@@ -614,7 +603,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     args = parse_args(argv)
     if os.name != "posix":
         fail("Only POSIX systems are supported (Linux, macOS, WSL2).")
-    program = "claude" if args.harness == "claude" else "opencode"
+    program = args.harness
     if not shutil.which(program):
         fail(f"{program} not found in PATH.")
     if not args.workdir.is_dir():

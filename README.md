@@ -2,7 +2,7 @@
 
 Vorstudie für eine Masterarbeit: **Wie geht ein Coding-Agent mit einem Prompt und dem bereitgestellten Wissen um?**
 
-Ein Coding-Agent ([OpenCode](https://opencode.ai) oder Claude Code, jeweils mit einem Sprachmodell) bekommt eine Aufgabe auf einem kleinen PostgreSQL-Projekt. Die Aufgabe bleibt gleich, das Wissen ändert sich: Es wird in unterschiedlichen Formen und über unterschiedliche Kanäle bereitgestellt, und ein Teil davon widerspricht bewusst dem Rest. Jede Kombination wird mehrfach ausgeführt. Ein Skript führt den Agenten aus und erfasst quantitative Metriken, ein Linter macht die Qualität des Ergebnisses zu Zahlen, und ein zweiter Modellaufruf wertet aus, was der Agent über widersprüchliche Regeln sagt.
+Ein Coding-Agent ([OpenCode](https://opencode.ai) oder die GitHub Copilot CLI, jeweils mit einem Sprachmodell) bekommt eine Aufgabe auf einem kleinen PostgreSQL-Projekt. Die Aufgabe bleibt gleich, das Wissen ändert sich: Es wird in unterschiedlichen Formen und über unterschiedliche Kanäle bereitgestellt, und ein Teil davon widerspricht bewusst dem Rest. Jede Kombination wird mehrfach ausgeführt. Ein Skript führt den Agenten aus und erfasst quantitative Metriken, ein Linter macht die Qualität des Ergebnisses zu Zahlen, und ein zweiter Modellaufruf wertet aus, was der Agent über widersprüchliche Regeln sagt.
 
 ## Forschungsfragen
 
@@ -19,7 +19,7 @@ Ein Coding-Agent ([OpenCode](https://opencode.ai) oder Claude Code, jeweils mit 
 | **Aufgabe** (Prompt) | fünf Aufgaben, siehe unten |
 | **Wissen** (Szenario) | neun Arten, dieselben 32 Regeln bereitzustellen, siehe unten |
 | **Modell** | `github-copilot/claude-sonnet-5` und `github-copilot/gpt-5.5` (zwei Anbieter); weitere mit `MODELS` (Liste: `opencode models`) |
-| **Harness** | OpenCode (Standard) und Claude Code (`--harness claude`, für eine Teilmenge geplant, siehe [Vorgehen](#vorgehen)) |
+| **Harness** | OpenCode (Standard) und die GitHub Copilot CLI (`--harness copilot`, für eine Teilmenge geplant, siehe [Vorgehen](#vorgehen)) |
 | **Wiederholungen** | mehrere Läufe pro Kombination, weil die Ausgabe eines Agenten schwankt |
 | **Objekt** | ein PostgreSQL-Schema (`sample_project/`), das die Regeln bewusst verletzt |
 
@@ -89,7 +89,7 @@ Welcher Vergleich welche Frage beantwortet:
 2. **Beurteilen:** Die Antworten auswerten: `python3 tools/judge_responses.py <results>` (ein Aufruf eines Modells aus einer anderen Familie pro Lauf, siehe unten).
 3. **Validieren:** Den Linter mit einer blinden Stichprobe und einer zweiten Person von Hand prüfen: `tools/validate_lint.py`.
 4. **Analysieren:** `python3 tools/analyze.py <results>`. Bei zwei Läufen pro Kombination kann kein p-Wert klein werden; die Statistik dient dazu, Effektgrößen zu sehen und die Zahl der Läufe zu planen.
-5. **Harness prüfen:** Auf einer kleinen Teilmenge mit Claude Code (später Codex), mit demselben Modell wie in OpenCode, damit sich der Effekt des Harness vom Effekt des Modells trennen lässt; vorgeschlagene Teilmenge: Szenarien `baseline`, `a`, `b`, `d`, `e` und Aufgaben `add-tables`, `urgent-fix`. Die Befunde aus Schritt 4 nur dort wiederholen, wo es sie gibt.
+5. **Harness prüfen:** Auf einer kleinen Teilmenge mit der GitHub Copilot CLI, mit demselben Modell wie in OpenCode (beide bieten über Copilot dieselben Modelle an), damit sich der Effekt des Harness vom Effekt des Modells trennen lässt; vorgeschlagene Teilmenge: Szenarien `baseline`, `a`, `b`, `d`, `e` und Aufgaben `add-tables`, `urgent-fix`. Die Befunde aus Schritt 4 nur dort wiederholen, wo es sie gibt.
 
 ### Stand und Einschränkungen
 
@@ -131,7 +131,7 @@ Voraussetzungen:
 | Voraussetzung | Wofür |
 |---|---|
 | [OpenCode](https://opencode.ai) **2.x** | der untersuchte Agent |
-| [Claude Code](https://claude.com/claude-code) (`claude`) | optional, ein zweiter Harness |
+| [GitHub Copilot CLI](https://docs.github.com/copilot/concepts/agents/about-copilot-cli) (`copilot`) | optional, ein zweiter Harness |
 | Ein Modellanbieter, den OpenCode unterstützt, z. B. GitHub Copilot | das Sprachmodell des Agenten |
 | Python ≥ 3.9 und git | das Messwerkzeug |
 | Docker | die MCP-Server und der Linter (ein Wegwerf-PostgreSQL) |
@@ -177,7 +177,7 @@ Jeder Lauf arbeitet auf einer **eigenen Kopie** von `sample_project/`, die Läuf
 | `-w`, `--workdir` | Verzeichnis, das für jeden Lauf kopiert wird (Standard: aktuelles Verzeichnis) |
 | `--add SRC[:DEST]` | kopiert eine Datei oder ein Verzeichnis in jeden Workspace; mit abschließendem `/` ist DEST ein Verzeichnis |
 | `--label` | Name des Szenarios |
-| `--harness` | der Coding-Agent: `opencode` (Standard) oder `claude` (Claude Code) |
+| `--harness` | der Coding-Agent: `opencode` (Standard) oder `copilot` (GitHub Copilot CLI) |
 | `-o`, `--out` | Ausgabeverzeichnis (Standard `results`) |
 
 ## Ergebnisse
@@ -199,12 +199,12 @@ results/
 |---|---|
 | Identifikation | `batch_id`, `run_index`, `label` (Szenario), `prompt`, `model_requested`, `model_effective`, `session_id`, `prompt_sha256`, `harness`, `harness_version`, `run_dir` |
 | Zeit und Status | `start_utc`, `end_utc`, `duration_s`, `status` (`ok`, `error`, `timeout`), `exit_code`, `error_message` |
-| Tokens und Kosten | `steps`, `tokens_total`, `tokens_input`, `tokens_output`, `tokens_reasoning`, `tokens_cache_read`, `tokens_cache_write`, `cost_usd`, `accounting_source` |
+| Tokens und Kosten | `steps`, `tokens_total`, `tokens_input`, `tokens_output`, `tokens_reasoning`, `tokens_cache_read`, `tokens_cache_write`, `cost_usd`, `premium_requests` (nur Copilot-CLI), `accounting_source` |
 | Verhalten | `tool_calls`, `tool_errors`, `mcp_calls`, `tools_used` (durch `;` getrennt), `output_chars` |
 | Nutzung des Wissens | `sql_files_read` (wie viele SQL-Dateien der Agent gelesen hat), `guideline_files_read` (wie viele Dateien in `guidelines/` oder `specs/` er gelesen hat), `knowledge_accessed` (`1`, wenn er eine solche Datei gelesen oder den MCP-Server aufgerufen hat, sonst `0`; in `a-agents-md` und `baseline` immer `0`, weil die `AGENTS.md` ohnehin Teil des Kontexts des Agenten ist) |
 | Änderungen | `files_changed`, `lines_added`, `lines_deleted` |
 
-In OpenCode 2 ruft ein Agent MCP-Tools aus Code mit dem Tool `execute` auf (`tools.<server>.<tool>(…)`); in Claude Code sind es eigene Tools mit dem Namen `mcp__<server>__<tool>`. `mcp_calls` zählt diese Verweise im Code aller `execute`-Aufrufe, und `tools_used` listet sie als `<server>.<tool>` (z. B. `docs.search_docs`). Ein Aufruf in einer Schleife wird einmal gezählt; der Wert sagt also, ob und wie der MCP-Server genutzt wurde, nicht, wie oft er abgefragt wurde. `knowledge_accessed` zeigt, ob der Agent das bereitgestellte Wissen überhaupt genutzt hat; welchen Inhalt er bekommen und angewendet hat, muss anhand von `response.txt` ausgewertet werden. `sql_files_read` zeigt, wie viel vom Schema der Agent sich angesehen hat (das Beispielprojekt hat 8 SQL-Dateien).
+In OpenCode 2 ruft ein Agent MCP-Tools aus Code mit dem Tool `execute` auf (`tools.<server>.<tool>(…)`); in der Copilot-CLI sind es eigene Tool-Aufrufe mit Server- und Tool-Namen. In OpenCode zählt `mcp_calls` die Verweise im Code aller `execute`-Aufrufe, und `tools_used` listet sie als `<server>.<tool>` (z. B. `docs.search_docs`). Ein Aufruf in einer Schleife wird einmal gezählt; der Wert sagt also, ob und wie der MCP-Server genutzt wurde, nicht, wie oft er abgefragt wurde. `knowledge_accessed` zeigt, ob der Agent das bereitgestellte Wissen überhaupt genutzt hat; welchen Inhalt er bekommen und angewendet hat, muss anhand von `response.txt` ausgewertet werden. `sql_files_read` zeigt, wie viel vom Schema der Agent sich angesehen hat (das Beispielprojekt hat 8 SQL-Dateien).
 
 Tokens und Kosten stammen aus der gespeicherten Sitzung (`opencode session export`, `accounting_source = export`); ist der Export nicht verfügbar, wird der Ereignisstrom verwendet (`stream`). Gezählt werden nur die Modellaufrufe des Agenten, nicht die Erzeugung des Sitzungstitels. `cost_usd` ist der Preis, den OpenCode aus den Token-Zahlen berechnet; es ist nicht das, was ein Abonnement wie GitHub Copilot abrechnet (siehe Hinweise).
 
@@ -276,24 +276,25 @@ lint = pd.read_csv("results/study-.../lint.csv")
 print(lint.groupby(["prompt", "label"])[["db_rate", "std_rate", "des_rate"]].mean().round(2))
 ```
 
-## Anderer Harness: Claude Code
+## Anderer Harness: GitHub Copilot CLI
 
-Die Studie kann statt mit OpenCode mit Claude Code laufen, z. B. um zu prüfen, dass die Ergebnisse nicht vom Harness abhängen. Verwende in beiden dasselbe Modell, um den Effekt des Harness vom Effekt des Modells zu trennen: Sonnet 5 in OpenCode (über Copilot) gegen Claude Code.
+Die Studie kann statt mit OpenCode mit der GitHub Copilot CLI laufen, z. B. um zu prüfen, dass die Ergebnisse nicht vom Harness abhängen. Beide Programme nutzen über GitHub Copilot dieselben Modelle (und dasselbe Abonnement); verwende in beiden dasselbe Modell, um den Effekt des Harness vom Effekt des Modells zu trennen.
 
 ```bash
-MODELS="claude:claude-sonnet-5" SCENARIOS="baseline b-guideline-files d-mcp-server" PROMPTS=add-tables study/run-all.sh 2
-HARNESS=claude MODEL=claude-sonnet-5 study/run.sh baseline add-tables 1       # eine einzelne Kombination
+MODELS="copilot:claude-sonnet-5" SCENARIOS="baseline b-guideline-files d-mcp-server" PROMPTS=add-tables study/run-all.sh 2
+HARNESS=copilot MODEL=claude-sonnet-5 study/run.sh baseline add-tables 1       # eine einzelne Kombination
 ```
 
-In `MODELS` wählt das Präfix `claude:` den Harness, Einträge ohne Präfix laufen in OpenCode. Alles nach dem Harness ist gleich: Szenarien, Prompts, Linter, Statistik, Judge. `runs.csv` hat die Spalten `harness` und `harness_version`; die Auswertungen gruppieren nach `harness/model`.
+In `MODELS` wählt das Präfix `copilot:` den Harness, Einträge ohne Präfix laufen in OpenCode. Die Modellnamen der Copilot-CLI haben keinen Anbieter-Präfix (`claude-sonnet-5`, `gpt-5.5`). Alles nach dem Harness ist gleich: Szenarien, Prompts, Linter, Statistik, Judge. `runs.csv` hat die Spalten `harness` und `harness_version`; die Auswertungen gruppieren nach `harness/model`.
 
-Was das Werkzeug für Claude Code tut (`prepare_claude_workspace`, `build_command`, `parse_claude_events`):
-- Die `AGENTS.md` des Szenarios wird zu `CLAUDE.md`, die MCP-Server aus `opencode.json` gehen in eine `mcp.json` im Lauf-Verzeichnis (`--strict-mcp-config`), und `opencode.json` wird aus dem Workspace entfernt.
-- `claude -p --output-format stream-json --setting-sources project,local`: keine Benutzereinstellungen, Hooks oder Plugins; `WebFetch` und `WebSearch` sind wie in der OpenCode-Konfiguration gesperrt; `--permission-mode bypassPermissions` lässt den Agenten ohne Rückfragen handeln, die Shell ist nicht abgeschirmt (siehe unten); keine Sitzungsspeicherung und keine Slash-Befehle.
-- Die Umgebung wird von den Variablen einer umgebenden Claude-Code-Sitzung befreit (`CLAUDE_*`, `ANTHROPIC_BASE_URL`), und das automatische Memory ist ausgeschaltet. Deine Zugangsdaten bleiben erhalten (`ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, die Anmeldung von `claude auth login`).
-- Tokens und Kosten stammen aus dem `result`-Ereignis (`accounting_source = stream`); `cost_usd` ist der API-Gegenwert, ein Abonnement wird nicht pro Token abgerechnet. Die Tool-Namen unterscheiden sich (`Read`, `Bash`, `Grep`, MCP-Tools als `mcp__<server>__<tool>`), `mcp_calls` zählt jeden Aufruf eines MCP-Tools.
+Was das Werkzeug für die Copilot-CLI tut (`prepare_copilot_workspace`, `build_command`, `parse_copilot_events`):
+- Die Copilot-CLI liest die `AGENTS.md` des Szenarios selbst. Die MCP-Server aus `opencode.json` werden als JSON an `--additional-mcp-config` übergeben, `opencode.json` wird aus dem Workspace entfernt.
+- `copilot --prompt=… --output-format json --allow-all-tools --no-ask-user --no-auto-update --no-remote --disable-builtin-mcps --disallow-temp-dir --deny-tool url`: keine Rückfragen, keine Updates, keine eingebauten GitHub-MCP-Server, kein URL-Zugriff (wie die gesperrten Web-Tools in OpenCode), kein Zugriff auf das temporäre Verzeichnis; `--allow-all-tools` lässt den Agenten ohne Nachfrage handeln, die Shell ist nicht abgeschirmt (siehe Hinweise).
+- `COPILOT_HOME` zeigt auf ein leeres Verzeichnis im Lauf-Verzeichnis, damit Konfiguration, Anweisungen, MCP-Server und Verlauf des Benutzers nicht in den Lauf gelangen; die Anmeldung bleibt davon unberührt. Andere `COPILOT_*`-Variablen werden entfernt.
+- Tokens stammen aus `--usage-output-file` (`accounting_source = usage`), die Schritte aus den `assistant.message`-Ereignissen. Die Copilot-CLI rechnet nicht in Dollar, sondern in Premium-Anfragen ab: Sie stehen in der Spalte `premium_requests` (ein Lauf kostet meist eine Anfrage mal den Faktor des Modells), `cost_usd` bleibt `0`. Das ist die Zahl, die für das Kontingent zählt.
+- Dateien gelesen wird mit dem Tool `view` oder über die Shell (`cat`, `grep`, …); beide Wege zählen für `guideline_files_read` und `sql_files_read`.
 
-Einschränkungen: Führe die Studie aus deinem eigenen Terminal aus, nicht aus einer anderen Claude-Code-Sitzung (deren Anmelde- und Proxy-Variablen funktionieren für einen verschachtelten Lauf nicht). Eine `~/.claude/CLAUDE.md` von dir würde Claude Code trotzdem lesen; benenne sie für die Dauer der Studie um. Claude Code setzt einen eigenen Standard für die Denktiefe und hat einen eigenen Systemprompt und eigene Tools, daher sind die absoluten Zahlen der beiden Harnesses nicht eins zu eins vergleichbar.
+Einschränkungen: Die Copilot-CLI hat einen eigenen Systemprompt, eigene Tools und eine eigene Standardeinstellung für die Denktiefe, daher sind die absoluten Zahlen der beiden Harnesses nicht eins zu eins vergleichbar. Die Tool-Namen (`view`, `bash`, …) stammen aus der beobachteten Version 1.0.98; bei einem Update des Programms sollte ein Lauf zur Kontrolle ausgewertet werden.
 
 ## Hinweise
 
